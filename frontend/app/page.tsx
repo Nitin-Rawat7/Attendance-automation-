@@ -9,6 +9,7 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Check,
   X,
 } from "lucide-react";
 import Sidebar from "@/components/Sidebar";
@@ -46,13 +47,13 @@ export default function Dashboard() {
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Edit Modal State
-  const [editingStudent, setEditingStudent] = useState<StudentRow | null>(null);
-  const [editForm, setEditForm] = useState({
-    name: "",
+  // Inline Row Edit State
+  const [editingRowId, setEditingRowId] = useState<number | null>(null);
+  const [editRowData, setEditRowData] = useState<{
+    course_id: number | string;
+    remaining_classes: number | string;
+  }>({
     course_id: "",
-    parent_whatsapp: "",
-    total_classes: "",
     remaining_classes: "",
   });
 
@@ -149,40 +150,39 @@ export default function Dashboard() {
     }
   };
 
-  // --- OPEN EDIT MODAL & FILL ALL FIELDS ---
-  const handleOpenEdit = (s: StudentRow) => {
-    setEditingStudent(s);
-    setEditForm({
-      name: s.name || "",
-      course_id: s.course_id ? String(s.course_id) : "",
-      parent_whatsapp: s.parent_whatsapp || "",
-      total_classes: String(s.total_classes ?? 0),
-      remaining_classes: String(s.remaining_classes ?? 0),
+  // --- ENABLE INLINE EDIT FOR A ROW ---
+  const handleStartInlineEdit = (s: StudentRow) => {
+    setEditingRowId(s.id);
+    setEditRowData({
+      course_id: s.course_id || "",
+      remaining_classes: s.remaining_classes ?? 0,
     });
   };
 
-  // --- SUBMIT EDIT STUDENT ---
-  const handleEditSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingStudent) return;
+  // --- CANCEL INLINE EDIT ---
+  const handleCancelInlineEdit = () => {
+    setEditingRowId(null);
+  };
 
+  // --- SAVE INLINE EDIT ---
+  const handleSaveInlineEdit = async (s: StudentRow) => {
     setSubmitting(true);
 
     try {
-      const res = await fetch(`${API}/students/${editingStudent.id}`, {
+      const res = await fetch(`${API}/students/${s.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: editForm.name,
-          course_id: Number(editForm.course_id),
-          parent_whatsapp: editForm.parent_whatsapp,
-          total_classes: Number(editForm.total_classes),
-          remaining_classes: Number(editForm.remaining_classes),
+          name: s.name,
+          course_id: Number(editRowData.course_id),
+          parent_whatsapp: s.parent_whatsapp || "",
+          total_classes: s.total_classes,
+          remaining_classes: Number(editRowData.remaining_classes),
         }),
       });
 
       if (res.ok) {
-        setEditingStudent(null);
+        setEditingRowId(null);
         await loadData();
       } else {
         const data = await res.json();
@@ -241,10 +241,11 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="flex">
+    <div className="flex min-h-screen">
       <Sidebar />
 
-      <main className="flex-1 p-8">
+      {/* Main Container with vertical scrolling */}
+      <main className="flex-1 h-screen overflow-y-auto p-8 pb-20">
         {/* WELCOME HEADING */}
         <h2
           className="text-center text-[32px] mb-[6px]"
@@ -322,7 +323,7 @@ export default function Dashboard() {
         </div>
 
         {/* STUDENT ROSTER */}
-        <div className="bg-[var(--panel)] glow-border rounded-xl p-5">
+        <div className="bg-[var(--panel)] glow-border rounded-xl p-5 mb-8">
           {/* ROSTER HEADER */}
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-display font-bold text-lg text-[var(--ink)] tracking-wide flex items-center gap-2">
@@ -433,212 +434,159 @@ export default function Dashboard() {
           {loading ? (
             <LoadingSpinner />
           ) : (
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr
-                  className="text-left border-b-2 border-[var(--border)] uppercase text-xs tracking-wider"
-                  style={{ color: "#A855F7" }}
-                >
-                  <th className="py-2 font-semibold">Name</th>
-                  <th className="font-semibold">Course</th>
-                  <th className="font-semibold">Remaining Classes</th>
-                  <th className="font-semibold">Action</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {students.map((s) => (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
                   <tr
-                    key={s.id}
-                    className="border-b-2"
-                    style={{
-                      borderBottomColor: "rgba(168, 85, 247, 0.35)",
-                    }}
+                    className="text-left border-b-2 border-[var(--border)] uppercase text-xs tracking-wider"
+                    style={{ color: "#A855F7" }}
                   >
-                    <td className="py-4 font-semibold text-[var(--ink)]">
-                      {s.name}
-                    </td>
-
-                    <td className="text-[var(--ink-dim)]">{s.course_name}</td>
-
-                    <td className="text-[var(--ink-dim)]">
-                      {s.remaining_classes} / {s.total_classes}
-                    </td>
-
-                    <td className="py-3">
-                      <span className="inline-flex items-center gap-2">
-                        {/* PRESENT */}
-                        <button
-                          type="button"
-                          disabled={loadingId === s.id}
-                          onClick={() => markAttendance(s.id, "present")}
-                          className="px-3 py-1.5 rounded-full bg-[var(--panel-light)] border border-[#39FF88]/40 text-[#39FF88] text-xs font-semibold hover:bg-[#39FF88]/10 disabled:opacity-50"
-                        >
-                          {loadingId === s.id ? "..." : "PRESENT"}
-                        </button>
-
-                        {/* ABSENT */}
-                        <button
-                          type="button"
-                          disabled={loadingId === s.id}
-                          onClick={() => markAttendance(s.id, "absent")}
-                          className="px-3 py-1.5 rounded-full bg-[var(--panel-light)] border border-[#FF3B6E]/40 text-[#FF3B6E] text-xs font-semibold hover:bg-[#FF3B6E]/10 disabled:opacity-50"
-                        >
-                          {loadingId === s.id ? "..." : "ABSENT"}
-                        </button>
-
-                        {/* EDIT BUTTON - LIGHT BRIGHT GREEN */}
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEdit(s)}
-                          className="p-1.5 rounded-lg bg-[var(--panel-light)] border border-[#39FF88]/40 text-[#39FF88] hover:bg-[#39FF88]/20 transition"
-                          title="Edit Student"
-                        >
-                          <Pencil size={15} />
-                        </button>
-
-                        {/* DELETE BUTTON - LIGHT BRIGHT RED */}
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteStudent(s.id, s.name)}
-                          className="p-1.5 rounded-lg bg-[var(--panel-light)] border border-[#FF3B6E]/40 text-[#FF3B6E] hover:bg-[#FF3B6E]/20 transition"
-                          title="Delete Student"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </span>
-                    </td>
+                    <th className="py-2 font-semibold">Name</th>
+                    <th className="font-semibold">Course</th>
+                    <th className="font-semibold">Remaining Classes</th>
+                    <th className="font-semibold">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+
+                <tbody>
+                  {students.map((s) => {
+                    const isEditing = editingRowId === s.id;
+
+                    return (
+                      <tr
+                        key={s.id}
+                        className="border-b-2"
+                        style={{
+                          borderBottomColor: "rgba(168, 85, 247, 0.35)",
+                        }}
+                      >
+                        {/* NAME */}
+                        <td className="py-4 font-semibold text-[var(--ink)]">
+                          {s.name}
+                        </td>
+
+                        {/* COURSE - READ OR INLINE DROPDOWN */}
+                        <td className="text-[var(--ink-dim)] pr-4">
+                          {isEditing ? (
+                            <select
+                              value={editRowData.course_id}
+                              onChange={(e) =>
+                                setEditRowData({
+                                  ...editRowData,
+                                  course_id: e.target.value,
+                                })
+                              }
+                              className="bg-[var(--panel-light)] border border-[#A855F7] rounded px-2 py-1 text-sm text-[var(--ink)] focus:outline-none"
+                            >
+                              <option value="">Select course</option>
+                              {courses.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            s.course_name
+                          )}
+                        </td>
+
+                        {/* REMAINING CLASSES - READ OR INLINE INPUT */}
+                        <td className="text-[var(--ink-dim)] pr-4">
+                          {isEditing ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                value={editRowData.remaining_classes}
+                                onChange={(e) =>
+                                  setEditRowData({
+                                    ...editRowData,
+                                    remaining_classes: e.target.value,
+                                  })
+                                }
+                                className="w-20 bg-[var(--panel-light)] border border-[#A855F7] rounded px-2 py-1 text-sm text-[var(--ink)] focus:outline-none"
+                              />
+                              <span className="text-xs">/ {s.total_classes}</span>
+                            </div>
+                          ) : (
+                            `${s.remaining_classes} / ${s.total_classes}`
+                          )}
+                        </td>
+
+                        {/* ACTIONS */}
+                        <td className="py-3">
+                          <span className="inline-flex items-center gap-2">
+                            {/* PRESENT */}
+                            <button
+                              type="button"
+                              disabled={loadingId === s.id || isEditing}
+                              onClick={() => markAttendance(s.id, "present")}
+                              className="px-3 py-1.5 rounded-full bg-[var(--panel-light)] border border-[#39FF88]/40 text-[#39FF88] text-xs font-semibold hover:bg-[#39FF88]/10 disabled:opacity-50"
+                            >
+                              {loadingId === s.id ? "..." : "PRESENT"}
+                            </button>
+
+                            {/* ABSENT */}
+                            <button
+                              type="button"
+                              disabled={loadingId === s.id || isEditing}
+                              onClick={() => markAttendance(s.id, "absent")}
+                              className="px-3 py-1.5 rounded-full bg-[var(--panel-light)] border border-[#FF3B6E]/40 text-[#FF3B6E] text-xs font-semibold hover:bg-[#FF3B6E]/10 disabled:opacity-50"
+                            >
+                              {loadingId === s.id ? "..." : "ABSENT"}
+                            </button>
+
+                            {/* INLINE EDIT / SAVE TOGGLE */}
+                            {isEditing ? (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={submitting}
+                                  onClick={() => handleSaveInlineEdit(s)}
+                                  className="p-1.5 rounded-lg bg-[#39FF88]/20 border border-[#39FF88] text-[#39FF88] hover:bg-[#39FF88]/30 transition"
+                                  title="Save Changes"
+                                >
+                                  <Check size={15} />
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={handleCancelInlineEdit}
+                                  className="p-1.5 rounded-lg bg-[#FF3B6E]/20 border border-[#FF3B6E] text-[#FF3B6E] hover:bg-[#FF3B6E]/30 transition"
+                                  title="Cancel"
+                                >
+                                  <X size={15} />
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleStartInlineEdit(s)}
+                                className="p-1.5 rounded-lg bg-[var(--panel-light)] border border-[#39FF88]/40 text-[#39FF88] hover:bg-[#39FF88]/20 transition"
+                                title="Edit Student Inline"
+                              >
+                                <Pencil size={15} />
+                              </button>
+                            )}
+
+                            {/* DELETE BUTTON */}
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteStudent(s.id, s.name)}
+                              className="p-1.5 rounded-lg bg-[var(--panel-light)] border border-[#FF3B6E]/40 text-[#FF3B6E] hover:bg-[#FF3B6E]/20 transition"
+                              title="Delete Student"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
-
-        {/* EDIT MODAL */}
-        {editingStudent && (
-          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-6 w-full max-w-lg shadow-xl relative">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold text-lg text-[var(--ink)]">
-                  Edit Student Details
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setEditingStudent(null)}
-                  className="text-[var(--ink-dim)] hover:text-[var(--ink)]"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              <form onSubmit={handleEditSubmit} className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
-                  <label className="text-xs text-[var(--ink-dim)] uppercase">
-                    Student Name
-                  </label>
-                  <input
-                    required
-                    value={editForm.name}
-                    onChange={(e) =>
-                      setEditForm({ ...editForm, name: e.target.value })
-                    }
-                    className="w-full mt-1 bg-[var(--panel-light)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-[var(--ink-dim)] uppercase">
-                    Course
-                  </label>
-                  <select
-                    required
-                    value={editForm.course_id}
-                    onChange={(e) =>
-                      setEditForm({ ...editForm, course_id: e.target.value })
-                    }
-                    className="w-full mt-1 bg-[var(--panel-light)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
-                  >
-                    <option value="">Select course</option>
-                    {courses.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs text-[var(--ink-dim)] uppercase">
-                    Parent WhatsApp
-                  </label>
-                  <input
-                    required
-                    value={editForm.parent_whatsapp}
-                    onChange={(e) =>
-                      setEditForm({
-                        ...editForm,
-                        parent_whatsapp: e.target.value,
-                      })
-                    }
-                    className="w-full mt-1 bg-[var(--panel-light)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-[var(--ink-dim)] uppercase">
-                    Total Classes
-                  </label>
-                  <input
-                    required
-                    type="number"
-                    value={editForm.total_classes}
-                    onChange={(e) =>
-                      setEditForm({ ...editForm, total_classes: e.target.value })
-                    }
-                    className="w-full mt-1 bg-[var(--panel-light)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-[var(--ink-dim)] uppercase">
-                    Remaining Classes
-                  </label>
-                  <input
-                    required
-                    type="number"
-                    value={editForm.remaining_classes}
-                    onChange={(e) =>
-                      setEditForm({
-                        ...editForm,
-                        remaining_classes: e.target.value,
-                      })
-                    }
-                    className="w-full mt-1 bg-[var(--panel-light)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
-                  />
-                </div>
-
-                <div className="col-span-2 flex justify-end gap-2 mt-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditingStudent(null)}
-                    className="px-4 py-2 rounded-lg text-sm bg-[var(--panel-light)] text-[var(--ink)]"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
-                    style={{ background: "#A855F7" }}
-                  >
-                    {submitting ? "Saving..." : "Save Changes"}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
       </main>
     </div>
   );
