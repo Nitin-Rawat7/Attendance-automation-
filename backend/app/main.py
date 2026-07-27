@@ -5,9 +5,14 @@ from app.routers import attendance, topics, projects, media, dashboard, students
 
 app = FastAPI(title="Attendance System")
 
+# Updated CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://student-attendance-automation-frontend.onrender.com",
+        "*"  # Temporary allowance for all domains while testing
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
