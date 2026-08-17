@@ -313,9 +313,9 @@ export default function MainLayout() {
               loading={loading}
               students={students}
               onAddClick={() => { setEditingTopic(null); setTopicName(""); setShowTopicModal(true); }}
-              onEditClick={(t) => { setEditingTopic(t); setTopicName(t.name); setShowTopicModal(true); }}
+              onEditClick={(t: CourseTopic) => { setEditingTopic(t); setTopicName(t.name); setShowTopicModal(true); }}
               onDeleteClick={handleDeleteTopic}
-              onMarkCompleteClick={(t) => {
+              onMarkCompleteClick={(t: CourseTopic) => {
                 setSelectedTopic(t);
                 setShowMarkingModal(true);
                 if (students.length > 0) {
@@ -335,7 +335,7 @@ export default function MainLayout() {
               setSelectedStudentId={setSelectedStudentId}
               actionLoading={actionLoading}
               onAddClick={() => { setEditingProject(null); setProjectNameInput(""); setShowProjectModal(true); }}
-              onEditClick={(p) => { setEditingProject(p); setProjectNameInput(p.name); setShowProjectModal(true); }}
+              onEditClick={(p: CourseProject) => { setEditingProject(p); setProjectNameInput(p.name); setShowProjectModal(true); }}
               onDeleteClick={handleDeleteProject}
               onMarkCompleteClick={handleCompleteProject}
             />
@@ -348,7 +348,7 @@ export default function MainLayout() {
               loading={loading}
               searchQuery={searchQuery}
               setSearchQuery={setSearchQuery}
-              onEditStudent={(s) => {
+              onEditStudent={(s: Student) => {
                 setEditingStudent(s);
                 setEditStudentName(s.name);
                 setEditStudentWhatsapp(s.parent_whatsapp || "");
