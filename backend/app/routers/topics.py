@@ -1,22 +1,17 @@
+import asyncio
+import threading
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel
-
-import asyncio
-import threading
 
 from app.db import get_db
 from app.models.student import Student
 from app.models.student_topic_progress import StudentTopicProgress
 from app.services.whatsapp import send_template_message
 
-
-router = APIRouter(
-    prefix="/students",
-    tags=["topics"]
-)
-
+router = APIRouter(prefix="/students", tags=["topics"])
 
 TOPIC_TABLES = {
     1: "robotics_topics",
@@ -24,560 +19,269 @@ TOPIC_TABLES = {
     3: "programming_topics",
 }
 
+# --- Helpers ---
 
-# ============================================================
-# WHATSAPP NOTIFICATION
-# ============================================================
-
-def fire_whatsapp_notification(
-    to: str,
-    template_name: str,
-    body_parameters: list[str],
-):
-    def send_message():
-
+def fire_whatsapp_notification(to: str, template_name: str, body_parameters: list[str]):
+    def send():
         try:
-
             asyncio.run(
-
                 send_template_message(
-
                     to=to,
-
                     template_name=template_name,
-
                     body_parameters=body_parameters,
-
                 )
-
             )
-
-            print(
-                "[whatsapp] notification sent successfully"
-            )
-
-
+            print(f"[whatsapp] {template_name} notification sent successfully")
         except Exception as e:
+            print(f"[whatsapp] {template_name} notification failed: {e}")
 
-            print(
-                f"[whatsapp] notification failed: {e}"
-            )
-
-
-    threading.Thread(
-
-        target=send_message,
-
-        daemon=True
-
-    ).start()
+    threading.Thread(target=send, daemon=True).start()
 
 
-# ============================================================
-# ADD TOPIC
-# ============================================================
+def get_topic_table(course_id: int) -> str:
+    table_name = TOPIC_TABLES.get(course_id)
+    if not table_name:
+        raise HTTPException(status_code=400, detail="unknown course_id, no topic table mapped")
+    return table_name
+
+
+def get_student_or_404(db: Session, student_id: int) -> Student:
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="student not found")
+    return student
+
+
+# --- Schemas ---
 
 class TopicCreate(BaseModel):
-
     course_id: int
-
     name: str
 
 
-@router.post(
-    "/course/{course_id}/add-topic"
-)
-def add_topic(
+class TopicUpdate(BaseModel):
+    name: str
 
-    course_id: int,
 
-    payload: TopicCreate,
+class ProgressStatusUpdate(BaseModel):
+    status: str
 
-    db: Session = Depends(get_db)
 
-):
+# --- Student List Endpoint ---
 
-    table_name = TOPIC_TABLES.get(
-        course_id
-    )
-
-
-    if not table_name:
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail="unknown course_id"
-
-        )
-
-
-    result = db.execute(
-
-        text(
-
-            f"""
-            INSERT INTO {table_name}
-                (name, status)
-
-            VALUES
-                (:name, 'pending')
-
-            RETURNING id
-            """
-
-        ),
-
-        {
-
-            "name": payload.name
-
-        }
-
-    )
-
-
-    topic_id = result.fetchone()[0]
-
-
-    students = (
-
-        db.query(Student)
-
-        .filter(
-
-            Student.course_id == course_id
-
-        )
-
-        .all()
-
-    )
-
-
-    for student in students:
-
-        db.add(
-
-            StudentTopicProgress(
-
-                student_id=student.id,
-
-                topic_id=topic_id,
-
-                course_id=course_id,
-
-                status="pending"
-
-            )
-
-        )
-
-
-    db.commit()
-
-
-    return {
-
-        "ok": True,
-
-        "topic_id": topic_id,
-
-        "students_linked": len(students)
-
-    }
-
-
-# ============================================================
-# LIST STUDENT TOPICS
-# ============================================================
-
-@router.get(
-    "/{student_id}/topics"
-)
-def list_student_topics(
-
-    student_id: int,
-
-    db: Session = Depends(get_db)
-
-):
-
-    student = (
-
-        db.query(Student)
-
-        .filter(
-
-            Student.id == student_id
-
-        )
-
-        .first()
-
-    )
-
-
-    if not student:
-
-        raise HTTPException(
-
-            status_code=404,
-
-            detail="student not found"
-
-        )
-
-
-    table_name = TOPIC_TABLES.get(
-
-        student.course_id
-
-    )
-
-
-    if not table_name:
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail="unknown course_id, no topic table mapped"
-
-        )
-
-
-    rows = db.execute(
-
-        text(
-
-            f"""
-            SELECT
-
-                stp.topic_id,
-
-                t.name,
-
-                stp.status
-
-            FROM student_topic_progress stp
-
-            JOIN {table_name} t
-
-                ON t.id = stp.topic_id
-
-            WHERE
-
-                stp.student_id = :student_id
-
-                AND stp.course_id = :course_id
-
-            ORDER BY stp.topic_id
-            """
-
-        ),
-
-        {
-
-            "student_id": student_id,
-
-            "course_id": student.course_id
-
-        }
-
-    ).fetchall()
-
-
+@router.get("/")
+def list_all_students(course_id: Optional[int] = None, db: Session = Depends(get_db)):
+    query = db.query(Student)
+    if course_id:
+        query = query.filter(Student.course_id == course_id)
+    
+    students = query.all()
     return [
-
         {
-
-            "topic_id": row[0],
-
-            "name": row[1]
-            or f"Topic {row[0]}",
-
-            "status": row[2]
-
+            "id": s.id,
+            "name": s.name,
+            "email": getattr(s, "email", None),
+            "total_classes": getattr(s, "total_classes", 30),
+            "attended_classes": getattr(s, "attended_classes", 0),
+            "remaining_classes": getattr(s, "remaining_classes", 30),
+            "course_id": getattr(s, "course_id", 1),
+            "parent_whatsapp": getattr(s, "parent_whatsapp", None),
         }
-
-        for row in rows
-
+        for s in students
     ]
 
 
-# ============================================================
-# COMPLETE TOPIC
-# ============================================================
+# --- Course Topic Management Endpoints ---
 
-@router.post(
-
-    "/{student_id}/topics/{topic_id}/complete"
-
-)
-def complete_topic_for_student(
-
-    student_id: int,
-
-    topic_id: int,
-
-    db: Session = Depends(get_db)
-
-):
-
-    # --------------------------------------------------------
-    # FIND STUDENT
-    # --------------------------------------------------------
-
-    student = (
-
-        db.query(Student)
-
-        .filter(
-
-            Student.id == student_id
-
-        )
-
-        .first()
-
-    )
+@router.get("/course/{course_id}/topics")
+def list_course_topics(course_id: int, db: Session = Depends(get_db)):
+    table_name = get_topic_table(course_id)
+    rows = db.execute(text(f"SELECT id, name FROM {table_name} ORDER BY id ASC")).fetchall()
+    return [{"id": r[0], "name": r[1]} for r in rows]
 
 
-    if not student:
-
-        raise HTTPException(
-
-            status_code=404,
-
-            detail="student not found"
-
-        )
-
-
-    # --------------------------------------------------------
-    # FIND STUDENT TOPIC PROGRESS
-    # --------------------------------------------------------
-
-    progress = (
-
-        db.query(
-
-            StudentTopicProgress
-
-        )
-
-        .filter(
-
-            StudentTopicProgress.student_id
-            == student_id,
-
-            StudentTopicProgress.topic_id
-            == topic_id,
-
-            StudentTopicProgress.course_id
-            == student.course_id
-
-        )
-
-        .first()
-
-    )
-
-
-    if not progress:
-
-        raise HTTPException(
-
-            status_code=404,
-
-            detail=(
-                "topic progress record "
-                "not found for this student"
-            )
-
-        )
-
-
-    # --------------------------------------------------------
-    # GET TOPIC TABLE
-    # --------------------------------------------------------
-
-    table_name = TOPIC_TABLES.get(
-
-        student.course_id
-
-    )
-
-
-    if not table_name:
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail=(
-                "unknown course_id, "
-                "no topic table mapped"
-            )
-
-        )
-
-
-    # --------------------------------------------------------
-    # GET TOPIC NAME
-    # --------------------------------------------------------
+@router.post("/course/{course_id}/add-topic")
+def add_topic(course_id: int, payload: TopicCreate, db: Session = Depends(get_db)):
+    table_name = get_topic_table(course_id)
 
     result = db.execute(
-
-        text(
-
-            f"""
-            SELECT name
-
-            FROM {table_name}
-
-            WHERE id = :topic_id
-            """
-
-        ),
-
-        {
-
-            "topic_id": topic_id
-
-        }
-
-    ).fetchone()
-
-
-    topic_name = (
-
-        result[0]
-
-        if result
-
-        else "this topic"
-
+        text(f"INSERT INTO {table_name} (name) VALUES (:name) RETURNING id"),
+        {"name": payload.name},
     )
+    topic_id = result.fetchone()[0]
 
-
-    # --------------------------------------------------------
-    # MARK TOPIC COMPLETED
-    # --------------------------------------------------------
-
-    progress.status = "completed"
-
-
+    students = db.query(Student).filter(Student.course_id == course_id).all()
+    for student in students:
+        db.add(
+            StudentTopicProgress(
+                student_id=student.id,
+                topic_id=topic_id,
+                course_id=course_id,
+                status="pending",
+            )
+        )
     db.commit()
 
+    return {"ok": True, "topic_id": topic_id, "students_linked": len(students)}
 
-    # --------------------------------------------------------
-    # SEND TOPIC COMPLETED WHATSAPP TEMPLATE
-    # --------------------------------------------------------
 
-    fire_whatsapp_notification(
-
-        to=student.parent_whatsapp,
-
-        template_name="topic_complete",
-
-        body_parameters=[
-
-            student.name,
-
-            topic_name
-
-        ]
-
+@router.put("/course/{course_id}/topics/{topic_id}")
+def update_course_topic(course_id: int, topic_id: int, payload: TopicUpdate, db: Session = Depends(get_db)):
+    table_name = get_topic_table(course_id)
+    result = db.execute(
+        text(f"UPDATE {table_name} SET name = :name WHERE id = :id"),
+        {"name": payload.name, "id": topic_id},
     )
+    db.commit()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    return {"ok": True, "message": "Topic updated"}
 
 
-    return {
+@router.delete("/course/{course_id}/topics/{topic_id}")
+def delete_course_topic(course_id: int, topic_id: int, db: Session = Depends(get_db)):
+    table_name = get_topic_table(course_id)
+    
+    db.query(StudentTopicProgress).filter(
+        StudentTopicProgress.course_id == course_id,
+        StudentTopicProgress.topic_id == topic_id
+    ).delete()
+    
+    result = db.execute(text(f"DELETE FROM {table_name} WHERE id = :id"), {"id": topic_id})
+    db.commit()
 
-        "ok": True,
-
-        "topic_name": topic_name,
-
-        "status": "completed"
-
-    }
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    return {"ok": True, "message": "Topic deleted"}
 
 
-# ============================================================
-# COMPLETE CLASS
-# ============================================================
+# --- Student Progress Endpoints ---
 
-@router.post(
+@router.get("/{student_id}/topics")
+def list_student_topics(student_id: int, db: Session = Depends(get_db)):
+    student = get_student_or_404(db, student_id)
+    table_name = get_topic_table(student.course_id)
 
-    "/{student_id}/class-complete"
+    rows = db.execute(
+        text(
+            f"""
+            SELECT stp.id, stp.topic_id, t.name, stp.status
+            FROM student_topic_progress stp
+            JOIN {table_name} t ON t.id = stp.topic_id
+            WHERE stp.student_id = :student_id AND stp.course_id = :course_id
+            ORDER BY stp.topic_id
+            """
+        ),
+        {"student_id": student_id, "course_id": student.course_id},
+    ).fetchall()
 
-)
+    return [
+        {
+            "id": row[0],
+            "topic_id": row[1],
+            "topic_title": row[2] or f"Topic {row[1]}",
+            "name": row[2] or f"Topic {row[1]}",
+            "status": row[3],
+        }
+        for row in rows
+    ]
 
-def complete_class_for_student(
 
-    student_id: int,
+@router.put("/topic-progress/{progress_id}")
+def update_topic_progress_status(progress_id: int, payload: ProgressStatusUpdate, db: Session = Depends(get_db)):
+    progress = db.query(StudentTopicProgress).filter(StudentTopicProgress.id == progress_id).first()
+    if not progress:
+        raise HTTPException(status_code=404, detail="topic progress record not found")
 
-    db: Session = Depends(get_db)
+    progress.status = payload.status
+    db.commit()
+    return {"ok": True, "status": progress.status}
 
-):
 
-    # --------------------------------------------------------
-    # FIND STUDENT
-    # --------------------------------------------------------
+# --- WhatsApp Template Action Endpoints ---
 
-    student = (
+@router.post("/{student_id}/topics/{topic_id}/complete")
+def complete_topic_for_student(student_id: int, topic_id: int, db: Session = Depends(get_db)):
+    student = get_student_or_404(db, student_id)
 
-        db.query(Student)
-
+    progress = (
+        db.query(StudentTopicProgress)
         .filter(
-
-            Student.id == student_id
-
+            StudentTopicProgress.student_id == student_id,
+            StudentTopicProgress.topic_id == topic_id,
+            StudentTopicProgress.course_id == student.course_id,
         )
-
         .first()
-
     )
 
+    if not progress:
+        raise HTTPException(status_code=404, detail="topic progress record not found for this student")
 
-    if not student:
+    table_name = get_topic_table(student.course_id)
+    result = db.execute(
+        text(f"SELECT name FROM {table_name} WHERE id = :topic_id"),
+        {"topic_id": topic_id},
+    ).fetchone()
 
-        raise HTTPException(
+    topic_name = result[0] if result else "this topic"
+    progress.status = "completed"
+    db.commit()
 
-            status_code=404,
-
-            detail="student not found"
-
+    if getattr(student, "parent_whatsapp", None):
+        fire_whatsapp_notification(
+            to=student.parent_whatsapp,
+            template_name="topic_complete",
+            body_parameters=[student.name, topic_name],
         )
 
-
-    # --------------------------------------------------------
-    # SEND CLASS COMPLETED WHATSAPP TEMPLATE
-    # --------------------------------------------------------
-
-    fire_whatsapp_notification(
-
-        to=student.parent_whatsapp,
-
-        template_name="class_completed",
-
-        body_parameters=[
-
-            student.name
-
-        ]
-
-    )
+    return {"ok": True, "topic_name": topic_name, "status": "completed"}
 
 
-    return {
+@router.post("/{student_id}/class-complete")
+def complete_class_for_student(student_id: int, db: Session = Depends(get_db)):
+    student = get_student_or_404(db, student_id)
 
-        "ok": True,
+    if getattr(student, "parent_whatsapp", None):
+        fire_whatsapp_notification(
+            to=student.parent_whatsapp,
+            template_name="class_complete",
+            body_parameters=[student.name],
+        )
 
-        "student_name": student.name,
+    return {"ok": True, "student_name": student.name, "status": "class_completed"}
 
-        "status": "class_completed"
 
-    }
+@router.post("/{student_id}/project-complete")
+def complete_project_for_student(student_id: int, project_name: str = "Final Project", db: Session = Depends(get_db)):
+    student = get_student_or_404(db, student_id)
+
+    if getattr(student, "parent_whatsapp", None):
+        fire_whatsapp_notification(
+            to=student.parent_whatsapp,
+            template_name="project_completed",
+            body_parameters=[student.name, project_name],
+        )
+
+    return {"ok": True, "student_name": student.name, "project_name": project_name, "status": "project_completed"}
+
+
+@router.post("/{student_id}/attendance-present")
+def attendance_present_for_student(student_id: int, db: Session = Depends(get_db)):
+    student = get_student_or_404(db, student_id)
+
+    if getattr(student, "parent_whatsapp", None):
+        total_classes = student.total_classes if student.total_classes is not None else 30
+        attended_row = db.execute(
+            text("SELECT COUNT(*) FROM attendance WHERE student_id = :id AND LOWER(status) = 'present'"),
+            {"id": student.id}
+        ).fetchone()
+        attended_classes = attended_row[0] if attended_row else 0
+        remaining_classes = max(0, total_classes - attended_classes)
+
+        fire_whatsapp_notification(
+            to=student.parent_whatsapp,
+            template_name="attendance_present",
+            body_parameters=[student.name, str(remaining_classes)],
+        )
+
+    return {"ok": True, "student_name": student.name, "status": "attendance_present"}

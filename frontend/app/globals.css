@@ -1,48 +1,14 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-:root {
-  --bg: #0A0E17;
-  --panel: #10151F;
-  --panel-light: #161C2B;
-  --cyan: #00E5FF;
-  --purple: #A855F7;
-  --green: #39FF88;
-  --orange: #FFB238;
-  --red: #FF3B6E;
-  --border: rgba(255, 255, 255, 0.06);
-  --ink: #E8EDF5;
-  --ink-dim: #f3f3f3;
+* {
+  box-sizing: border-box;
 }
 
 body {
-  background: var(--bg);
-  color: var(--ink);
-  background-image:
-    radial-gradient(circle at 15% 10%, rgba(168,85,247,0.08), transparent 45%),
-    radial-gradient(circle at 85% 90%, rgba(0,229,255,0.08), transparent 45%);
-}
-.font-script {
-  font-family: var(--font-script);
-}
-
-.font-display {
-  font-family: var(--font-display);
-}
-.font-body {
-  font-family: var(--font-body);
-}
-
-.glow-border {
-  border: 1px solid var(--border);
-  box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+  background: #F8F9FA;
+  color: #1A1A2E;
 }
 
 a {
   text-decoration: none;
 }
-
-::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--panel-light); border-radius: 4px; }

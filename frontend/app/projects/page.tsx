@@ -1,219 +1,206 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Sidebar from "@/components/Sidebar";
-import SearchBar from "@/components/SearchBar";
-import LoadingSpinner from "@/components/LoadingSpinner";
+import { useState, useEffect } from "react";
 
-type StudentRow = { id: number; name: string; course_name: string };
-type ProjectRow = { project_id: number; name: string; status: string };
-type CourseRow = { id: number; name: string };
+type CourseProject = {
+  id: number;
+  name: string;
+};
+
+const COURSES = [
+  { id: 1, name: "Robotics" },
+  { id: 2, name: "AI" },
+  { id: 3, name: "Programming" },
+];
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 export default function ProjectsPage() {
-  const [students, setStudents] = useState<StudentRow[]>([]);
-  const [courses, setCourses] = useState<CourseRow[]>([]);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [projects, setProjects] = useState<ProjectRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [actionId, setActionId] = useState<number | null>(null);
-  const [showForm, setShowForm] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ course_id: "", name: "" });
-  const [search, setSearch] = useState("");
+  const [selectedCourse, setSelectedCourse] = useState<number>(1);
+  const [projects, setProjects] = useState<CourseProject[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
 
-  const API = process.env.NEXT_PUBLIC_API_URL;
-  const accent = "#FB7185";
+  const [showModal, setShowModal] = useState<boolean>(false);
+  const [editingProject, setEditingProject] = useState<CourseProject | null>(null);
+  const [projectName, setProjectName] = useState<string>("");
+  const [submitting, setSubmitting] = useState<boolean>(false);
+
+  const fetchProjects = async (courseId: number) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/students/course/${courseId}/projects`);
+      const data = await res.json();
+      setProjects(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error(err);
+      setProjects([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    fetch(`${API}/students/`)
-      .then((r) => r.json())
-      .then((data) => {
-        setStudents(data);
-        if (data.length > 0) setSelectedId(data[0].id);
+    fetchProjects(selectedCourse);
+  }, [selectedCourse]);
+
+  const handleOpenModal = (project: CourseProject | null = null) => {
+    setEditingProject(project);
+    setProjectName(project?.name || "");
+    setShowModal(true);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!projectName.trim()) return;
+
+    setSubmitting(true);
+    try {
+      const isEdit = !!editingProject;
+      const url = isEdit
+        ? `${API_BASE_URL}/students/course/${selectedCourse}/projects/${editingProject.id}`
+        : `${API_BASE_URL}/students/course/${selectedCourse}/add-project`;
+
+      const res = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: isEdit
+          ? JSON.stringify({ name: projectName })
+          : JSON.stringify({ course_id: selectedCourse, name: projectName }),
       });
 
-    fetch(`${API}/courses/`)
-      .then((r) => r.json())
-      .then(setCourses)
-      .catch(() => {});
-  }, []);
+      if (!res.ok) throw new Error("Operation failed");
 
-  const loadProjects = (studentId: number) => {
-    fetch(`${API}/projects/student/${studentId}`)
-      .then((r) => r.json())
-      .then(setProjects)
-      .catch(() => {});
-  };
-
-  useEffect(() => {
-    if (selectedId) loadProjects(selectedId);
-  }, [selectedId]);
-
-  const completeProject = async (projectId: number) => {
-    if (!selectedId) return;
-    setActionId(projectId);
-
-    const res = await fetch(
-      `${API}/projects/${selectedId}/projects/${projectId}/complete`,
-      { method: "POST" }
-    );
-
-    if (res.ok) {
-      setProjects((prev) =>
-        prev.map((p) =>
-          p.project_id === projectId ? { ...p, status: "completed" } : p
-        )
-      );
+      setShowModal(false);
+      fetchProjects(selectedCourse);
+    } catch (err: any) {
+      alert(err.message || "An error occurred");
+    } finally {
+      setSubmitting(false);
     }
-
-    setActionId(null);
   };
 
-  const handleAddProject = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.course_id || !form.name) return alert("Fill all fields");
-    setSubmitting(true);
-
-    const res = await fetch(`${API}/projects/course/${form.course_id}/add`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ course_id: Number(form.course_id), name: form.name }),
-    });
-
-    if (res.ok) {
-      setForm({ course_id: "", name: "" });
-      setShowForm(false);
-      if (selectedId) loadProjects(selectedId);
-    } else {
-      alert("Failed to add project");
+  const handleDelete = async (projectId: number) => {
+    if (!confirm("Are you sure? This will remove project progress tracking for enrolled students.")) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/students/course/${selectedCourse}/projects/${projectId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Delete failed");
+      fetchProjects(selectedCourse);
+    } catch (err: any) {
+      alert(err.message || "Delete failed");
     }
-
-    setSubmitting(false);
   };
-
-  const filteredProjects = projects.filter((p) =>
-    p.name.toLowerCase().includes(search.toLowerCase())
-  );
 
   return (
-    <div className="flex">
-      <Sidebar />
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex justify-between items-center bg-white p-6 rounded-xl border border-gray-100 shadow-xs">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Course Projects</h1>
+          <p className="text-xs text-gray-500">Manage course projects and auto-sync progress for students</p>
+        </div>
+        <button
+          onClick={() => handleOpenModal()}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-xs cursor-pointer transition"
+        >
+          + Add Project
+        </button>
+      </div>
 
-      <main className="flex-1 p-8">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-display font-bold tracking-wide" style={{ color: accent }}>
-            PROJECTS MODULE
-          </h2>
-
+      {/* Course Filter Tabs */}
+      <div className="flex space-x-2 border-b border-gray-200">
+        {COURSES.map((course) => (
           <button
-            onClick={() => setShowForm(!showForm)}
-            className="px-4 py-2 rounded-md text-sm font-semibold"
-            style={{ background: "var(--panel-light)", border: `1px solid ${accent}50`, color: accent }}
+            key={course.id}
+            onClick={() => setSelectedCourse(course.id)}
+            className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
+              selectedCourse === course.id
+                ? "border-blue-600 text-blue-600 font-semibold"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
           >
-            {showForm ? "CANCEL" : "+ ADD PROJECT"}
+            {course.name}
           </button>
+        ))}
+      </div>
+
+      {/* Projects Grid */}
+      {loading ? (
+        <div className="text-center py-12 text-gray-400 text-sm">Loading projects...</div>
+      ) : projects.length === 0 ? (
+        <div className="text-center py-12 text-gray-400 text-sm bg-white rounded-xl border border-gray-200">
+          No projects configured for this course yet.
         </div>
-
-        {showForm && (
-          <form
-            onSubmit={handleAddProject}
-            className="bg-[var(--panel)] glow-border rounded-xl p-5 mb-6 grid grid-cols-2 gap-4"
-          >
-            <div>
-              <label className="text-xs text-[var(--ink-dim)] uppercase tracking-wide">Course</label>
-              <select
-                value={form.course_id}
-                onChange={(e) => setForm({ ...form, course_id: e.target.value })}
-                className="w-full mt-1 bg-[var(--panel-light)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
-              >
-                <option value="">Select course</option>
-                {courses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {projects.map((p) => (
+            <div
+              key={p.id}
+              className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs flex flex-col justify-between space-y-4 hover:border-gray-300 transition"
+            >
+              <div>
+                <span className="text-[10px] font-mono text-gray-400 uppercase tracking-wider">#Project {p.id}</span>
+                <h3 className="font-semibold text-gray-900 text-base mt-1">{p.name}</h3>
+              </div>
+              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100">
+                <button
+                  onClick={() => handleOpenModal(p)}
+                  className="px-3 py-1 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-lg text-xs font-medium cursor-pointer transition"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDelete(p.id)}
+                  className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-medium cursor-pointer transition"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
-
-            <div>
-              <label className="text-xs text-[var(--ink-dim)] uppercase tracking-wide">Project Name</label>
-              <input
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="w-full mt-1 bg-[var(--panel-light)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
-                placeholder="e.g. Line Follower Robot"
-              />
-            </div>
-
-            <div className="col-span-2">
-              <button
-                type="submit"
-                disabled={submitting}
-                className="px-4 py-2 rounded-md text-sm font-semibold disabled:opacity-50"
-                style={{ background: accent, color: "#0A0E17" }}
-              >
-                {submitting ? "ADDING..." : "SAVE PROJECT"}
-              </button>
-            </div>
-          </form>
-        )}
-
-        <div className="mb-6">
-          <select
-            value={selectedId ?? ""}
-            onChange={(e) => setSelectedId(Number(e.target.value))}
-            className="bg-[var(--panel)] text-[var(--ink)] border border-[var(--border)] rounded-lg px-4 py-2 text-sm"
-          >
-            {students.map((s) => (
-              <option key={s.id} value={s.id}>{s.name} — {s.course_name}</option>
-            ))}
-          </select>
+          ))}
         </div>
+      )}
 
-        <SearchBar value={search} onChange={setSearch} placeholder="Search projects..." accent={accent} />
-
-        <div className="bg-[var(--panel)] glow-border rounded-xl p-5">
-          {loading ? (
-            <LoadingSpinner />
-          ) : filteredProjects.length === 0 ? (
-            <p className="text-[var(--ink-dim)] text-sm text-center py-8">No projects found.</p>
-          ) : (
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="text-left text-[var(--ink-dim)] border-b-2 border-[var(--border)] uppercase text-xs tracking-wider">
-                  <th className="py-2 font-semibold">Project</th>
-                  <th className="font-semibold">Status</th>
-                  <th className="font-semibold">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredProjects.map((p) => (
-                  <tr key={p.project_id} className="border-b-2" style={{ borderBottomColor: "rgba(251, 113, 133, 0.35)" }}>
-                    <td className="py-4 font-semibold text-[var(--ink)]">{p.name}</td>
-                    <td>
-                      <span
-                        className="text-xs font-semibold px-2 py-1 rounded-md"
-                        style={{
-                          color: p.status === "completed" ? "#39FF88" : "#7C8AA5",
-                          background: p.status === "completed" ? "#39FF8815" : "transparent",
-                        }}
-                      >
-                        {p.status.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className="py-3">
-                      <button
-                        disabled={p.status === "completed" || actionId === p.project_id}
-                        onClick={() => completeProject(p.project_id)}
-                        className="px-3 py-1.5 rounded-full text-xs font-semibold disabled:opacity-40"
-                        style={{ background: "var(--panel-light)", border: `1px solid ${accent}50`, color: accent }}
-                      >
-                        {p.status === "completed" ? "DONE" : "MARK COMPLETE"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+      {/* Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 space-y-4 shadow-xl">
+            <h2 className="text-lg font-bold text-gray-900">
+              {editingProject ? "Edit Project" : "Add Project"}
+            </h2>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Project Name</label>
+                <input
+                  type="text"
+                  required
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  placeholder="e.g. Line Follower Robot"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowModal(false)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-xs text-gray-700 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium cursor-pointer disabled:opacity-50"
+                >
+                  {submitting ? "Saving..." : "Save Project"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-      </main>
+      )}
     </div>
   );
 }

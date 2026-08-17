@@ -1,23 +1,32 @@
-# Python
-backend/venv/
-backend/__pycache__/
-backend/**/*.pyc
-
-# Environment variables
+# Environment Variables
 .env
 .env.local
-backend/.env
-frontend/.env
-frontend/.env.local
+.env.*.local
 
-# Node
-frontend/node_modules/
-frontend/.next/
-frontend/out/
+# Python / FastAPI
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
 
-# IDE
-.vscode/
+# Node.js / Next.js
+node_modules/
+.next/
+out/
+build/
+dist/
 
-# OS
+# Local Uploads
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# System & Logs
 .DS_Store
 Thumbs.db
+*.log
+.vscode/
+.idea/

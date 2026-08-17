@@ -1,64 +1,65 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import func, text
 from datetime import date
-from app.db import get_db
-from app.models.student import Student
-from app.models.attendance import Attendance
+from fastapi import APIRouter, Depends
+from sqlalchemy import func
+from sqlalchemy.orm import Session
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+from app.db import get_db
+from app.models import Attendance, Course, Student
+
+router = APIRouter(
+    prefix="/dashboard",
+    tags=["Dashboard"]
+)
 
 @router.get("/summary")
 def get_summary(db: Session = Depends(get_db)):
-    total_students = db.query(func.count(Student.id)).scalar()
+    """
+    Returns high-level metric counts for the dashboard.
+    """
+    total_students = db.query(func.count(Student.id)).scalar() or 0
 
     today = date.today()
-    today_present = (
-        db.query(func.count(Attendance.id))
-        .filter(Attendance.date == today, Attendance.status == "present")
-        .scalar()
-    )
-    today_absent = (
-        db.query(func.count(Attendance.id))
-        .filter(Attendance.date == today, Attendance.status == "absent")
-        .scalar()
-    )
+    present_today = db.query(func.count(Attendance.id)).filter(
+        Attendance.date == today,
+        Attendance.status == "Present"
+    ).scalar() or 0
 
-    total_remaining_classes = db.query(func.sum(Student.remaining_classes)).scalar() or 0
-    total_completed_classes = (
-        db.query(func.sum(Student.total_classes - Student.remaining_classes)).scalar() or 0
-    )
+    absent_today = db.query(func.count(Attendance.id)).filter(
+        Attendance.date == today,
+        Attendance.status == "Absent"
+    ).scalar() or 0
 
-    topics_row = db.execute(
-        text("""
-            select
-                count(*) filter (where status = 'completed') as completed,
-                count(*) filter (where status = 'pending') as pending
-            from student_topic_progress
-        """)
-    ).fetchone()
-    topics_completed = topics_row[0] or 0
-    topics_pending = topics_row[1] or 0
-
-    projects_row = db.execute(
-        text("""
-            select
-                count(*) filter (where status = 'completed') as completed,
-                count(*) filter (where status = 'pending') as pending
-            from student_project_progress
-        """)
-    ).fetchone()
-    projects_completed = projects_row[0] or 0
-    projects_pending = projects_row[1] or 0
+    total_courses = db.query(func.count(Course.id)).scalar() or 0
 
     return {
         "total_students": total_students,
-        "today_present": today_present,
-        "today_absent": today_absent,
-        "total_completed_classes": total_completed_classes,
-        "total_remaining_classes": total_remaining_classes,
-        "topics_completed": topics_completed,
-        "topics_pending": topics_pending,
-        "projects_completed": projects_completed,
-        "projects_pending": projects_pending,
+        "present_today": present_today,
+        "absent_today": absent_today,
+        "total_courses": total_courses
     }
+
+
+@router.get("/students")
+def get_all_dashboard_students(db: Session = Depends(get_db)):
+    """
+    Returns ALL students by using an outerjoin so students without 
+    attendance records are not excluded.
+    """
+    students_data = db.query(
+        Student.id,
+        Student.name,
+        func.count(Attendance.id).label("total_logs")
+    ).outerjoin(
+        Attendance, Student.id == Attendance.student_id
+    ).group_by(
+        Student.id, Student.name
+    ).all()
+
+    return [
+        {
+            "id": s_id,
+            "name": name,
+            "total_logs": total_logs
+        }
+        for s_id, name, total_logs in students_data
+    ]

@@ -1,4 +1,32 @@
-venv/
-__pycache__/
+# Environment Variables
 .env
-*.pyc0
+.env.local
+.env.*.local
+
+# Python / FastAPI
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# Node.js / Next.js
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Local Uploads
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# System & Logs
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

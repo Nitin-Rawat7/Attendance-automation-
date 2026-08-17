@@ -1,760 +1,222 @@
 import uuid
-import asyncio
-import threading
-
-from fastapi import (
-    APIRouter,
-    Depends,
-    HTTPException,
-    UploadFile,
-    File,
-    Form,
-)
-
+import os
+import shutil
+import requests
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from supabase import create_client
-from pydantic import BaseModel
+from sqlalchemy import text
 
-from app.db import (
-    get_db,
-    SessionLocal
-)
-from app.models.media import Media
+from app.db import get_db
 from app.models.student import Student
-from app.config import settings
 
-from app.services.whatsapp import send_media_message
+router = APIRouter(prefix="/media", tags=["media"])
 
+UPLOAD_DIR = os.path.abspath("uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-router = APIRouter(
-    prefix="/media",
-    tags=["media"]
-)
-
-
-# ============================================================
-# SUPABASE CLIENT
-# ============================================================
-
-supabase = create_client(
-    settings.SUPABASE_URL,
-    settings.SUPABASE_KEY
-)
-
-
-# ============================================================
-# LIST MEDIA FOR STUDENT
-# ============================================================
-
-@router.get("/student/{student_id}")
-def list_media_for_student(
-    student_id: int,
-    db: Session = Depends(get_db)
-):
-
-    media = (
-
-        db.query(Media)
-
-        .filter(
-            Media.student_id == student_id
+@router.get("/")
+def list_all_media(db: Session = Depends(get_db)):
+    rows = db.execute(
+        text(
+            """
+            SELECT 
+                m.id, 
+                m.student_id, 
+                s.name as student_name, 
+                m.type, 
+                m.media_url, 
+                m.sent,
+                m.caption
+            FROM media m
+            JOIN students s ON s.id = m.student_id
+            ORDER BY m.id DESC
+            """
         )
-
-        .all()
-
-    )
-
+    ).fetchall()
 
     return [
-
         {
-
-            "id": item.id,
-
-            "type": item.type,
-
-            "url": item.url,
-
-            "sent": item.sent
-
+            "id": row[0],
+            "student_id": row[1],
+            "student_name": row[2],
+            "type": row[3] or "photo",
+            "media_url": row[4] or "",
+            "sent": row[5] if row[5] is not None else False,
+            "caption": row[6] or "",
         }
-
-        for item in media
-
+        for row in rows
     ]
 
+@router.get("/students/{student_id}")
+@router.get("/student/{student_id}")
+def list_student_media(student_id: int, db: Session = Depends(get_db)):
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
 
-# ============================================================
-# UPLOAD PHOTO / VIDEO
-# ============================================================
+    rows = db.execute(
+        text(
+            """
+            SELECT 
+                m.id, 
+                m.student_id, 
+                s.name as student_name, 
+                m.type, 
+                m.media_url, 
+                m.sent,
+                m.caption
+            FROM media m
+            JOIN students s ON s.id = m.student_id
+            WHERE m.student_id = :student_id
+            ORDER BY m.id DESC
+            """
+        ),
+        {"student_id": student_id},
+    ).fetchall()
 
-@router.post("/upload")
-async def upload_media(
+    return [
+        {
+            "id": row[0],
+            "student_id": row[1],
+            "student_name": row[2],
+            "type": row[3] or "photo",
+            "media_url": row[4] or "",
+            "sent": row[5] if row[5] is not None else False,
+            "caption": row[6] or "",
+        }
+        for row in rows
+    ]
 
+@router.post("/")
+def create_media(
     student_id: int = Form(...),
-
-    file: UploadFile = File(...),
-
+    type: str = Form("photo"),
+    caption: Optional[str] = Form(""),
+    file: Optional[UploadFile] = File(None),
+    media_url: Optional[str] = Form(None),
     db: Session = Depends(get_db)
-
 ):
-
-    # --------------------------------------------------------
-    # CHECK STUDENT
-    # --------------------------------------------------------
-
-    student = (
-
-        db.query(Student)
-
-        .filter(
-
-            Student.id == student_id
-
-        )
-
-        .first()
-
-    )
-
-
+    student = db.query(Student).filter(Student.id == student_id).first()
     if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
 
-        raise HTTPException(
+    final_url = media_url or ""
+    if file:
+        ext = os.path.splitext(file.filename)[1]
+        safe_filename = f"{uuid.uuid4().hex}{ext}"
+        file_path = os.path.join(UPLOAD_DIR, safe_filename)
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        host_base = os.getenv("BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+        final_url = f"{host_base}/uploads/{safe_filename}"
 
-            status_code=404,
+    if not final_url:
+        raise HTTPException(status_code=400, detail="Please provide either a file or a media URL")
 
-            detail="student not found"
-
-        )
-
-
-    # --------------------------------------------------------
-    # CHECK FILE TYPE
-    # --------------------------------------------------------
-
-    if not file.content_type:
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail="file type not detected"
-
-        )
-
-
-    if not (
-
-        file.content_type.startswith("image/")
-
-        or
-
-        file.content_type.startswith("video/")
-
-    ):
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail=(
-                "Only image and video "
-                "files are allowed"
-            )
-
-        )
-
-
-    # --------------------------------------------------------
-    # DETERMINE MEDIA TYPE
-    # --------------------------------------------------------
-
-    file_type = (
-
-        "video"
-
-        if file.content_type.startswith(
-            "video/"
-        )
-
-        else "photo"
-
+    result = db.execute(
+        text(
+            """
+            INSERT INTO media (student_id, type, media_url, sent, caption)
+            VALUES (:student_id, :type, :media_url, false, :caption)
+            RETURNING id
+            """
+        ),
+        {
+            "student_id": student_id,
+            "type": type,
+            "media_url": final_url,
+            "caption": caption or "",
+        },
     )
-
-
-    # --------------------------------------------------------
-    # FILE EXTENSION
-    # --------------------------------------------------------
-
-    original_filename = (
-
-        file.filename
-
-        or "media"
-
-    )
-
-
-    if "." in original_filename:
-
-        ext = (
-
-            original_filename
-
-            .rsplit(".", 1)[-1]
-
-            .lower()
-
-        )
-
-    else:
-
-        ext = (
-
-            "mp4"
-
-            if file_type == "video"
-
-            else "jpg"
-
-        )
-
-
-    # --------------------------------------------------------
-    # UNIQUE FILE NAME
-    # --------------------------------------------------------
-
-    unique_name = (
-
-        f"{student_id}_"
-        f"{uuid.uuid4().hex}."
-        f"{ext}"
-
-    )
-
-
-    # --------------------------------------------------------
-    # READ FILE
-    # --------------------------------------------------------
-
-    content = await file.read()
-
-
-    if not content:
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail="uploaded file is empty"
-
-        )
-
-
-    # --------------------------------------------------------
-    # UPLOAD TO SUPABASE STORAGE
-    # --------------------------------------------------------
-
-    try:
-
-        supabase.storage \
-            .from_("student-media") \
-            .upload(
-
-                unique_name,
-
-                content,
-
-                {
-
-                    "content-type":
-                    file.content_type
-
-                }
-
-            )
-
-    except Exception as e:
-
-        print(
-
-            "[media] Supabase upload error:"
-
-        )
-
-        print(e)
-
-
-        raise HTTPException(
-
-            status_code=500,
-
-            detail="failed to upload media"
-
-        )
-
-
-    # --------------------------------------------------------
-    # GET PUBLIC URL
-    # --------------------------------------------------------
-
-    public_url = (
-
-        supabase.storage
-
-        .from_("student-media")
-
-        .get_public_url(
-
-            unique_name
-
-        )
-
-    )
-
-
-    # --------------------------------------------------------
-    # SAVE MEDIA IN DATABASE
-    # --------------------------------------------------------
-
-    media = Media(
-
-        student_id=student_id,
-
-        type=file_type,
-
-        url=public_url,
-
-        sent=False
-
-    )
-
-
-    db.add(media)
-
+    row = result.fetchone()
     db.commit()
 
-    db.refresh(media)
-
-
     return {
-
-        "ok": True,
-
-        "media_id": media.id,
-
-        "url": public_url,
-
-        "type": file_type
-
+        "id": row[0],
+        "student_id": student_id,
+        "student_name": student.name,
+        "type": type,
+        "media_url": final_url,
+        "sent": False,
+        "caption": caption or "",
     }
-
-
-# ============================================================
-# ADD MEDIA USING URL
-# ============================================================
-
-class MediaURLCreate(BaseModel):
-
-    student_id: int
-
-    url: str
-
-    type: str
-
-
-@router.post("/add-url")
-def add_media_url(
-
-    payload: MediaURLCreate,
-
-    db: Session = Depends(get_db)
-
-):
-
-    # --------------------------------------------------------
-    # CHECK STUDENT
-    # --------------------------------------------------------
-
-    student = (
-
-        db.query(Student)
-
-        .filter(
-
-            Student.id
-            == payload.student_id
-
-        )
-
-        .first()
-
-    )
-
-
-    if not student:
-
-        raise HTTPException(
-
-            status_code=404,
-
-            detail="student not found"
-
-        )
-
-
-    # --------------------------------------------------------
-    # VALIDATE TYPE
-    # --------------------------------------------------------
-
-    if payload.type not in (
-
-        "photo",
-
-        "video"
-
-    ):
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail=(
-                "type must be "
-                "photo or video"
-            )
-
-        )
-
-
-    # --------------------------------------------------------
-    # VALIDATE URL
-    # --------------------------------------------------------
-
-    if not payload.url.startswith(
-
-        "http"
-
-    ):
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail="invalid media URL"
-
-        )
-
-
-    # --------------------------------------------------------
-    # SAVE MEDIA
-    # --------------------------------------------------------
-
-    media = Media(
-
-        student_id=payload.student_id,
-
-        type=payload.type,
-
-        url=payload.url,
-
-        sent=False
-
-    )
-
-
-    db.add(media)
-
-    db.commit()
-
-    db.refresh(media)
-
-
-    return {
-
-        "ok": True,
-
-        "media_id": media.id
-
-    }
-
-
-# ============================================================
-# SEND MEDIA TO PARENT WHATSAPP
-# ============================================================
 
 @router.post("/{media_id}/send")
-def send_media(
+def send_media_to_whatsapp(media_id: int, db: Session = Depends(get_db)):
+    row = db.execute(
+        text(
+            """
+            SELECT 
+                m.id, 
+                m.student_id, 
+                s.name as student_name, 
+                s.parent_whatsapp as parent_phone, 
+                m.type, 
+                m.media_url, 
+                m.caption,
+                m.sent
+            FROM media m
+            JOIN students s ON s.id = m.student_id
+            WHERE m.id = :media_id
+            """
+        ),
+        {"media_id": media_id}
+    ).fetchone()
 
-    media_id: int,
+    if not row:
+        raise HTTPException(status_code=404, detail="Media record not found")
 
-    db: Session = Depends(get_db)
+    _, student_id, student_name, parent_phone, media_type, media_url, caption, sent = row
 
-):
+    if not parent_phone:
+        raise HTTPException(status_code=400, detail="Parent WhatsApp number is missing for this student in database")
 
-    # --------------------------------------------------------
-    # FIND MEDIA
-    # --------------------------------------------------------
+    supabase_base_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    supabase_key = os.getenv("SUPABASE_KEY", "")
 
-    media = (
-
-        db.query(Media)
-
-        .filter(
-
-            Media.id == media_id
-
-        )
-
-        .first()
-
-    )
-
-
-    if not media:
-
+    if not supabase_base_url or not supabase_key:
         raise HTTPException(
-
-            status_code=404,
-
-            detail="media not found"
-
+            status_code=500, 
+            detail="Supabase configuration (SUPABASE_URL or SUPABASE_KEY) is missing in .env file"
         )
 
-
-    # --------------------------------------------------------
-    # PREVENT DUPLICATE SEND
-    # --------------------------------------------------------
-
-    if media.sent:
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail=(
-                "media has already "
-                "been sent"
-            )
-
-        )
-
-
-    # --------------------------------------------------------
-    # FIND STUDENT
-    # --------------------------------------------------------
-
-    student = (
-
-        db.query(Student)
-
-        .filter(
-
-            Student.id
-            == media.student_id
-
-        )
-
-        .first()
-
-    )
-
-
-    if not student:
-
-        raise HTTPException(
-
-            status_code=404,
-
-            detail="student not found"
-
-        )
-
-
-    # --------------------------------------------------------
-    # CHECK WHATSAPP NUMBER
-    # --------------------------------------------------------
-
-    if not student.parent_whatsapp:
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail=(
-                "student does not have "
-                "a parent WhatsApp number"
-            )
-
-        )
-
-
-    # --------------------------------------------------------
-    # CHECK MEDIA URL
-    # --------------------------------------------------------
-
-    if not media.url:
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail="media URL is empty"
-
-        )
-
-
-    # --------------------------------------------------------
-    # SEND IN BACKGROUND
-    # --------------------------------------------------------
-
-    def send_message():
-
-        try:
-
-            asyncio.run(
-
-                send_media_message(
-
-                    to=student.parent_whatsapp,
-
-                    media_type=media.type,
-
-                    media_url=media.url
-
-                )
-
-            )
-
-
-            # ------------------------------------------------
-            # IMPORTANT
-            # Mark sent ONLY after successful API request
-            # ------------------------------------------------
-
-            from app.db import SessionLocal
-
-
-            background_db = SessionLocal()
-
-
-            try:
-
-                background_media = (
-
-                    background_db
-
-                    .query(Media)
-
-                    .filter(
-
-                        Media.id
-                        == media_id
-
-                    )
-
-                    .first()
-
-                )
-
-
-                if background_media:
-
-                    background_media.sent = True
-
-                    background_db.commit()
-
-
-            finally:
-
-                background_db.close()
-
-
-            print(
-
-                "[whatsapp] media "
-                "sent successfully"
-
-            )
-
-
-        except Exception as e:
-
-            print(
-
-                "[whatsapp] media "
-                f"send failed: {e}"
-
-            )
-
-
-    threading.Thread(
-
-        target=send_message,
-
-        daemon=True
-
-    ).start()
-
-
-    return {
-
-        "ok": True,
-
-        "message": (
-            "media sending started"
-        )
-
+    supabase_url = f"{supabase_base_url}/functions/v1/send-whatsapp"
+
+    payload = {
+        "student_id": student_id,
+        "student_name": student_name,
+        "phone": parent_phone,
+        "media_url": media_url,
+        "type": media_type,
+        "caption": caption or f"Project update for {student_name}"
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {supabase_key}"
     }
 
+    try:
+        response = requests.post(supabase_url, json=payload, headers=headers, timeout=15)
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Edge Function error: {response.text}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to connect to Supabase Edge Function: {str(e)}")
 
-# ============================================================
-# DELETE MEDIA
-# ============================================================
-
-@router.delete("/{media_id}")
-def delete_media(
-
-    media_id: int,
-
-    db: Session = Depends(get_db)
-
-):
-
-    media = (
-
-        db.query(Media)
-
-        .filter(
-
-            Media.id == media_id
-
-        )
-
-        .first()
-
+    db.execute(
+        text("UPDATE media SET sent = true WHERE id = :media_id"),
+        {"media_id": media_id}
     )
-
-
-    if not media:
-
-        raise HTTPException(
-
-            status_code=404,
-
-            detail="media not found"
-
-        )
-
-
-    db.delete(media)
-
     db.commit()
 
+    return {"ok": True, "message": "Media sent successfully to WhatsApp"}
 
-    return {
-
-        "ok": True
-
-    }
+@router.delete("/{media_id}")
+def delete_media(media_id: int, db: Session = Depends(get_db)):
+    result = db.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+    db.commit()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Media record not found")
+    return {"ok": True}

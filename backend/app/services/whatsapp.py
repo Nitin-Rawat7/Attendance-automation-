@@ -1,237 +1,63 @@
+import os
+import asyncio
+import threading
 import httpx
 
-from app.config import settings
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
+PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 
 
-# ============================================================
-# WHATSAPP API
-# ============================================================
+async def send_template_message(to: str, template_name: str, body_parameters: list[str]):
+    """Sends a WhatsApp Cloud API template message to a parent's phone number."""
+    if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
+        print("[whatsapp] credentials not set in env variables; skipping notification")
+        return
 
-WHATSAPP_API_URL = (
-    f"https://graph.facebook.com/v23.0/"
-    f"{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
-)
+    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
 
-
-# ============================================================
-# SEND TEMPLATE MESSAGE
-# ============================================================
-
-async def send_template_message(
-    to: str,
-    template_name: str,
-    body_parameters: list[str],
-) -> dict:
+    components = []
+    if body_parameters:
+        components.append(
+            {
+                "type": "body",
+                "parameters": [{"type": "text", "text": str(p)} for p in body_parameters],
+            }
+        )
 
     payload = {
         "messaging_product": "whatsapp",
-
         "to": to,
-
         "type": "template",
-
         "template": {
-
             "name": template_name,
-
-            "language": {
-                "code": "en"
-            },
-
-            "components": [
-
-                {
-
-                    "type": "body",
-
-                    "parameters": [
-
-                        {
-
-                            "type": "text",
-
-                            "text": str(parameter)
-
-                        }
-
-                        for parameter
-                        in body_parameters
-
-                    ]
-
-                }
-
-            ]
-
-        }
-
+            "language": {"code": "en"},
+            "components": components,
+        },
     }
 
-
-    headers = {
-
-        "Authorization":
-        f"Bearer {settings.WHATSAPP_ACCESS_TOKEN}",
-
-        "Content-Type":
-        "application/json"
-
-    }
-
-
-    async with httpx.AsyncClient(
-
-        timeout=30
-
-    ) as client:
-
-        response = await client.post(
-
-            WHATSAPP_API_URL,
-
-            json=payload,
-
-            headers=headers
-
-        )
-
-
-    if response.status_code >= 400:
-
-        print(
-            "WhatsApp Template API Error:"
-        )
-
-        print(response.text)
-
-        response.raise_for_status()
-
-
-    result = response.json()
-
-
-    print(
-        "[whatsapp] Template API response:"
-    )
-
-    print(result)
-
-
-    return result
-
-
-# ============================================================
-# SEND PHOTO / VIDEO MEDIA
-# ============================================================
-
-async def send_media_message(
-
-    to: str,
-
-    media_type: str,
-
-    media_url: str
-
-) -> dict:
-
-
-    if media_type not in (
-
-        "photo",
-
-        "video"
-
-    ):
-
-        raise ValueError(
-
-            "media_type must be "
-            "photo or video"
-
-        )
-
-
-    # --------------------------------------------------------
-    # WhatsApp uses "image" instead of "photo"
-    # --------------------------------------------------------
-
-    whatsapp_media_type = (
-
-        "image"
-
-        if media_type == "photo"
-
-        else "video"
-
-    )
-
-
-    payload = {
-
-        "messaging_product":
-        "whatsapp",
-
-        "to": to,
-
-        "type":
-        whatsapp_media_type,
-
-        whatsapp_media_type: {
-
-            "link": media_url
-
-        }
-
-    }
-
-
-    headers = {
-
-        "Authorization":
-        f"Bearer {settings.WHATSAPP_ACCESS_TOKEN}",
-
-        "Content-Type":
-        "application/json"
-
-    }
-
-
-    async with httpx.AsyncClient(
-
-        timeout=30
-
-    ) as client:
-
-        response = await client.post(
-
-            WHATSAPP_API_URL,
-
-            json=payload,
-
-            headers=headers
-
-        )
-
-
-    if response.status_code >= 400:
-
-        print(
-            "WhatsApp Media API Error:"
-        )
-
-        print(response.text)
-
-        response.raise_for_status()
-
-
-    result = response.json()
-
-
-    print(
-        "[whatsapp] Media API response:"
-    )
-
-    print(result)
-
-
-    return result
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload, headers=headers)
+        if response.status_code != 200:
+            print(f"[whatsapp] API error ({response.status_code}): {response.text}")
+
+
+def fire_whatsapp_notification(to: str, template_name: str, body_parameters: list[str]):
+    """Helper to dispatch send_template_message in a non-blocking daemon thread."""
+    def send():
+        try:
+            asyncio.run(
+                send_template_message(
+                    to=to,
+                    template_name=template_name,
+                    body_parameters=body_parameters,
+                )
+            )
+            print(f"[whatsapp] notification '{template_name}' sent to {to}")
+        except Exception as e:
+            print(f"[whatsapp] background thread failed: {e}")
+
+    threading.Thread(target=send, daemon=True).start()

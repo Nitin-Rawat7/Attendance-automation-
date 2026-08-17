@@ -1,716 +1,454 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Sidebar from "@/components/Sidebar";
-import SearchBar from "@/components/SearchBar";
-import LoadingSpinner from "@/components/LoadingSpinner";
+import { useState, useEffect } from "react";
 
-type StudentRow = {
-  id: number;
-  name: string;
-  course_name: string;
-};
+type CourseTopic = { id: number; name: string };
+type Student = { id: number; name: string; parent_whatsapp?: string; course_id?: number };
 
-type TopicRow = {
-  topic_id: number;
-  name: string;
-  status: string;
-};
+const COURSES = [
+  { id: 1, name: "Robotics" },
+  { id: 2, name: "AI" },
+  { id: 3, name: "Programming" },
+];
 
-type CourseRow = {
-  id: number;
-  name: string;
-};
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 export default function TopicsPage() {
-  const [students, setStudents] = useState<StudentRow[]>([]);
-  const [courses, setCourses] = useState<CourseRow[]>([]);
+  const [selectedCourse, setSelectedCourse] = useState<number>(1);
+  const [topics, setTopics] = useState<CourseTopic[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
 
-  const [selectedId, setSelectedId] =
-    useState<number | null>(null);
+  // General Action Student Selector State
+  const [globalStudentId, setGlobalStudentId] = useState<number | "">("");
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const [topics, setTopics] =
-    useState<TopicRow[]>([]);
+  // Student Topic Progress Map (topic_id -> status) for tick marks
+  const [studentProgressMap, setStudentProgressMap] = useState<Record<number, string>>({});
 
-  const [loading, setLoading] =
-    useState(false);
+  // Topic Add/Edit Modal
+  const [showTopicModal, setShowTopicModal] = useState<boolean>(false);
+  const [editingTopic, setEditingTopic] = useState<CourseTopic | null>(null);
+  const [topicName, setTopicName] = useState<string>("");
+  const [submittingTopic, setSubmittingTopic] = useState<boolean>(false);
 
-  const [actionId, setActionId] =
-    useState<number | null>(null);
+  // Topic Marking Modal
+  const [showMarkingModal, setShowMarkingModal] = useState<boolean>(false);
+  const [selectedTopic, setSelectedTopic] = useState<CourseTopic | null>(null);
+  const [markingStudentId, setMarkingStudentId] = useState<number | "">("");
+  const [topicStatus, setTopicStatus] = useState<string>("pending");
+  const [loadingStatus, setLoadingStatus] = useState<boolean>(false);
 
-  const [classCompleting, setClassCompleting] =
-    useState(false);
+  // Project Completion Modal / Input
+  const [showProjectModal, setShowProjectModal] = useState<boolean>(false);
+  const [projectName, setProjectName] = useState<string>("Final Robot Assembly");
 
-  const [showForm, setShowForm] =
-    useState(false);
+  const fetchStudentProgress = async (studentId: number) => {
+    try {
+      const res = await fetch(`${API}/students/${studentId}/topics`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        const map: Record<number, string> = {};
+        data.forEach((item: any) => {
+          map[item.topic_id] = item.status;
+        });
+        setStudentProgressMap(map);
+      }
+    } catch {
+      setStudentProgressMap({});
+    }
+  };
 
-  const [submitting, setSubmitting] =
-    useState(false);
-
-  const [form, setForm] = useState({
-    course_id: "",
-    name: "",
-  });
-
-  const [search, setSearch] =
-    useState("");
-
-  const API =
-    process.env.NEXT_PUBLIC_API_URL;
-
-  const accent = "#FBBF6B";
-
-
-  // ============================================================
-  // LOAD STUDENTS AND COURSES
-  // ============================================================
-
-  useEffect(() => {
-    fetch(`${API}/students/`)
-      .then((response) => response.json())
-      .then((data) => {
-        setStudents(data);
-
-        if (data.length > 0) {
-          setSelectedId(data[0].id);
-        }
-      })
-      .catch((error) => {
-        console.error(
-          "Failed to load students:",
-          error
-        );
-      });
-
-
-    fetch(`${API}/courses/`)
-      .then((response) => response.json())
-      .then(setCourses)
-      .catch((error) => {
-        console.error(
-          "Failed to load courses:",
-          error
-        );
-      });
-
-  }, [API]);
-
-
-  // ============================================================
-  // LOAD TOPICS
-  // ============================================================
-
-  const loadTopics = (
-    studentId: number
-  ) => {
+  const fetchData = async (courseId: number) => {
     setLoading(true);
+    try {
+      const [topicsRes, studentsRes] = await Promise.all([
+        fetch(`${API}/students/course/${courseId}/topics`),
+        fetch(`${API}/students/?course_id=${courseId}`)
+      ]);
+      
+      const topicsData = await topicsRes.json();
+      const studentsData = await studentsRes.json();
 
-    fetch(
-      `${API}/students/${studentId}/topics`
-    )
-      .then((response) => response.json())
-      .then((data) => {
-        setTopics(data);
-      })
-      .catch((error) => {
-        console.error(
-          "Failed to load topics:",
-          error
-        );
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+      setTopics(Array.isArray(topicsData) ? topicsData : []);
+      const studentList = Array.isArray(studentsData) ? studentsData : [];
+      setStudents(studentList);
+
+      if (studentList.length > 0) {
+        const firstId = studentList[0].id;
+        setGlobalStudentId(firstId);
+        fetchStudentProgress(firstId);
+      } else {
+        setGlobalStudentId("");
+        setStudentProgressMap({});
+      }
+    } catch (err) {
+      console.error(err);
+      setTopics([]);
+      setStudents([]);
+      setStudentProgressMap({});
+    } finally {
+      setLoading(false);
+    }
   };
-
-
-  // ============================================================
-  // LOAD TOPICS WHEN STUDENT CHANGES
-  // ============================================================
 
   useEffect(() => {
-    if (selectedId) {
-      loadTopics(selectedId);
+    fetchData(selectedCourse);
+  }, [selectedCourse]);
+
+  useEffect(() => {
+    if (globalStudentId) {
+      fetchStudentProgress(Number(globalStudentId));
+    } else {
+      setStudentProgressMap({});
     }
-  }, [selectedId]);
+  }, [globalStudentId]);
 
-
-  // ============================================================
-  // MARK TOPIC COMPLETE
-  // ============================================================
-
-  const completeTopic = async (
-    topicId: number
-  ) => {
-    if (!selectedId) {
+  const triggerNotification = async (endpoint: string, actionKey: string, successMsg: string, extraBody?: object) => {
+    if (!globalStudentId) {
+      alert("Please select a student first.");
       return;
     }
-
-    setActionId(topicId);
-
+    setActionLoading(actionKey);
     try {
-      const response = await fetch(
-        `${API}/students/${selectedId}/topics/${topicId}/complete`,
-        {
-          method: "POST",
-        }
-      );
-
-      if (!response.ok) {
-        console.error(
-          "Failed to complete topic"
-        );
-
-        return;
-      }
-
-      setTopics((previousTopics) =>
-        previousTopics.map((topic) =>
-          topic.topic_id === topicId
-            ? {
-                ...topic,
-                status: "completed",
-              }
-            : topic
-        )
-      );
-
-    } catch (error) {
-
-      console.error(
-        "Topic completion error:",
-        error
-      );
-
-    } finally {
-
-      setActionId(null);
-
-    }
-  };
-
-
-  // ============================================================
-  // CLASS COMPLETE
-  // ============================================================
-
-  const completeClass = async () => {
-    if (!selectedId) {
-      return;
-    }
-
-    setClassCompleting(true);
-
-    try {
-
-      const response = await fetch(
-        `${API}/students/${selectedId}/class-complete`,
-        {
-          method: "POST",
-        }
-      );
-
-
-      if (!response.ok) {
-
-        console.error(
-          "Failed to complete class"
-        );
-
-        return;
-      }
-
-      console.log(
-        "Class completed successfully"
-      );
-
-    } catch (error) {
-
-      console.error(
-        "Class completion error:",
-        error
-      );
-
-    } finally {
-
-      setClassCompleting(false);
-
-    }
-  };
-
-
-  // ============================================================
-  // ADD TOPIC
-  // ============================================================
-
-  const handleAddTopic = async (
-    event: React.FormEvent
-  ) => {
-    event.preventDefault();
-
-    if (
-      !form.course_id ||
-      !form.name
-    ) {
-      console.error(
-        "Course and topic name are required"
-      );
-
-      return;
-    }
-
-    setSubmitting(true);
-
-    try {
-
-      const response = await fetch(
-        `${API}/students/course/${form.course_id}/add-topic`,
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-
-          body: JSON.stringify({
-            course_id:
-              Number(form.course_id),
-
-            name: form.name,
-          }),
-        }
-      );
-
-
-      if (!response.ok) {
-
-        console.error(
-          "Failed to add topic"
-        );
-
-        return;
-      }
-
-
-      setForm({
-        course_id: "",
-        name: "",
+      const res = await fetch(`${API}/students/${globalStudentId}/${endpoint}`, {
+        method: "POST",
+        headers: extraBody ? { "Content-Type": "application/json" } : undefined,
+        body: extraBody ? JSON.stringify(extraBody) : undefined,
       });
-
-      setShowForm(false);
-
-
-      if (selectedId) {
-        loadTopics(selectedId);
-      }
-
-    } catch (error) {
-
-      console.error(
-        "Add topic error:",
-        error
-      );
-
+      if (!res.ok) throw new Error("Failed to send notification");
+      alert(successMsg);
+    } catch (err: any) {
+      alert(err.message || "Error sending notification");
     } finally {
-
-      setSubmitting(false);
-
+      setActionLoading(null);
     }
   };
 
+  const checkTopicStatus = async (studentId: number, topicId: number) => {
+    setLoadingStatus(true);
+    try {
+      const res = await fetch(`${API}/students/${studentId}/topics`);
+      const data = await res.json();
+      const found = Array.isArray(data) && data.find((t: any) => t.topic_id === topicId);
+      setTopicStatus(found ? found.status : "pending");
+    } catch {
+      setTopicStatus("pending");
+    } finally {
+      setLoadingStatus(false);
+    }
+  };
 
-  // ============================================================
-  // SEARCH
-  // ============================================================
+  const handleOpenMarking = (topic: CourseTopic) => {
+    setSelectedTopic(topic);
+    setShowMarkingModal(true);
+    const initialSid = globalStudentId || (students.length > 0 ? students[0].id : "");
+    if (initialSid) {
+      setMarkingStudentId(initialSid);
+      checkTopicStatus(Number(initialSid), topic.id);
+    }
+  };
 
-  const filteredTopics =
-    topics.filter((topic) =>
-      topic.name
-        .toLowerCase()
-        .includes(
-          search.toLowerCase()
-        )
-    );
+  const handleCompleteTopic = async () => {
+    if (!markingStudentId || !selectedTopic) return;
+    setActionLoading("topic_complete");
+    try {
+      const res = await fetch(`${API}/students/${markingStudentId}/topics/${selectedTopic.id}/complete`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed");
+      
+      setTopicStatus("completed");
+      
+      fetchStudentProgress(Number(markingStudentId));
+      if (globalStudentId) {
+        fetchStudentProgress(Number(globalStudentId));
+      }
 
+      setShowMarkingModal(false);
+      alert("Topic marked complete & 'topic_complete' WhatsApp template sent to parent!");
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
-  // ============================================================
-  // UI
-  // ============================================================
+  const handleTopicSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!topicName) return;
+    setSubmittingTopic(true);
+    const isEdit = !!editingTopic;
+    const url = isEdit ? `${API}/students/course/${selectedCourse}/topics/${editingTopic.id}` : `${API}/students/course/${selectedCourse}/add-topic`;
+    
+    try {
+      const res = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(isEdit ? { name: topicName } : { course_id: selectedCourse, name: topicName }),
+      });
+      if (!res.ok) throw new Error("Operation failed");
+      setShowTopicModal(false);
+      fetchData(selectedCourse);
+    } catch (err:any) {
+      alert(err.message);
+    } finally {
+      setSubmittingTopic(false);
+    }
+  };
+
+  const handleDeleteTopic = async (topicId: number) => {
+    if (!confirm("Are you sure you want to delete this topic?")) return;
+    try {
+      const res = await fetch(`${API}/students/course/${selectedCourse}/topics/${topicId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Delete failed");
+      fetchData(selectedCourse);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
 
   return (
-
-    <div className="flex">
-
-      <Sidebar />
-
-
-      <main className="flex-1 p-8">
-
-
-        {/* HEADER */}
-
-        <div className="flex items-center justify-between mb-6">
-
-          <h2
-            className="text-2xl font-display font-bold tracking-wide"
-            style={{
-              color: accent,
-            }}
-          >
-            TOPICS MODULE
-          </h2>
-
-
-          <button
-            onClick={() =>
-              setShowForm(!showForm)
-            }
-            className="px-4 py-2 rounded-md text-sm font-semibold"
-            style={{
-              background:
-                "var(--panel-light)",
-
-              border:
-                `1px solid ${accent}50`,
-
-              color: accent,
-            }}
-          >
-
-            {showForm
-              ? "CANCEL"
-              : "+ ADD TOPIC"}
-
-          </button>
-
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 rounded-xl border border-gray-100 shadow-xs gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Curriculum & Class Management</h1>
+          <p className="text-xs text-gray-500">Manage course modules and trigger distinct parent WhatsApp templates</p>
         </div>
+        <button
+          onClick={() => { setEditingTopic(null); setTopicName(""); setShowTopicModal(true); }}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-xs cursor-pointer shadow-xs"
+        >
+          + Add Course Topic
+        </button>
+      </div>
 
-
-        {/* ADD TOPIC FORM */}
-
-        {showForm && (
-
-          <form
-            onSubmit={handleAddTopic}
-            className="bg-[var(--panel)] glow-border rounded-xl p-5 mb-6 grid grid-cols-2 gap-4"
+      <div className="flex space-x-2 border-b border-gray-200">
+        {COURSES.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => setSelectedCourse(c.id)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 cursor-pointer transition-colors ${
+              selectedCourse === c.id ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
           >
+            {c.name}
+          </button>
+        ))}
+      </div>
 
-            <div>
-
-              <label className="text-xs text-[var(--ink-dim)] uppercase tracking-wide">
-
-                Course
-
-              </label>
-
-
+      <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs space-y-4">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h2 className="text-sm font-bold text-gray-900">Live Session Quick Actions ({COURSES.find(c => c.id === selectedCourse)?.name})</h2>
+            <p className="text-xs text-gray-500">Select a student to view their completion checkmarks and trigger actions.</p>
+          </div>
+          <div>
+            {students.length === 0 ? (
+              <span className="text-xs text-red-500 font-medium">No students in this course.</span>
+            ) : (
               <select
-                value={form.course_id}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    course_id:
-                      event.target.value,
-                  })
-                }
-                className="w-full mt-1 bg-[var(--panel-light)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
+                value={globalStudentId}
+                onChange={(e) => setGlobalStudentId(Number(e.target.value))}
+                className="px-3 py-1.5 bg-gray-50 border border-gray-300 rounded-lg text-xs font-medium text-gray-800 shadow-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-
-                <option value="">
-                  Select course
-                </option>
-
-
-                {courses.map((course) => (
-
-                  <option
-                    key={course.id}
-                    value={course.id}
-                  >
-
-                    {course.name}
-
-                  </option>
-
+                {students.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name} (ID: {s.id})</option>
                 ))}
-
               </select>
-
-            </div>
-
-
-            <div>
-
-              <label className="text-xs text-[var(--ink-dim)] uppercase tracking-wide">
-
-                Topic Name
-
-              </label>
-
-
-              <input
-                value={form.name}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    name:
-                      event.target.value,
-                  })
-                }
-                className="w-full mt-1 bg-[var(--panel-light)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
-                placeholder="e.g. Arduino Basics"
-              />
-
-            </div>
-
-
-            <div className="col-span-2">
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="px-4 py-2 rounded-md text-sm font-semibold disabled:opacity-50"
-                style={{
-                  background: accent,
-                  color: "#0A0E17",
-                }}
-              >
-
-                {submitting
-                  ? "ADDING..."
-                  : "SAVE TOPIC"}
-
-              </button>
-
-            </div>
-
-          </form>
-
-        )}
-
-
-        {/* STUDENT SELECTOR */}
-
-        <div className="mb-6">
-
-          <select
-            value={selectedId ?? ""}
-            onChange={(event) =>
-              setSelectedId(
-                Number(event.target.value)
-              )
-            }
-            className="bg-[var(--panel)] text-[var(--ink)] border border-[var(--border)] rounded-lg px-4 py-2 text-sm"
-          >
-
-            {students.map((student) => (
-
-              <option
-                key={student.id}
-                value={student.id}
-              >
-
-                {student.name}
-                {" — "}
-                {student.course_name}
-
-              </option>
-
-            ))}
-
-          </select>
-
+            )}
+          </div>
         </div>
 
-
-        {/* CLASS COMPLETE BUTTON */}
-
-        <div className="mb-6">
-
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 border-t border-gray-100">
           <button
-            onClick={completeClass}
-            disabled={
-              !selectedId ||
-              classCompleting
-            }
-            className="px-5 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50"
-            style={{
-              background: "#39FF88",
-              color: "#0A0E17",
-            }}
+            onClick={() => triggerNotification("attendance-present", "attendance", "Attendance Present notification sent successfully!")}
+            disabled={actionLoading !== null || students.length === 0}
+            className="flex items-center justify-center space-x-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-300 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer transition-colors"
           >
-
-            {classCompleting
-              ? "COMPLETING CLASS..."
-              : "CLASS COMPLETE"}
-
+            <span>👤</span>
+            <span>{actionLoading === "attendance" ? "Sending..." : "Mark Attendance (attendance_present)"}</span>
           </button>
 
+          <button
+            onClick={() => triggerNotification("class-complete", "class", "Class Complete notification sent successfully!")}
+            disabled={actionLoading !== null || students.length === 0}
+            className="flex items-center justify-center space-x-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer transition-colors"
+          >
+            <span>📚</span>
+            <span>{actionLoading === "class" ? "Sending..." : "Mark Class Complete (class_complete)"}</span>
+          </button>
+
+          <button
+            onClick={() => setShowProjectModal(true)}
+            disabled={actionLoading !== null || students.length === 0}
+            className="flex items-center justify-center space-x-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer transition-colors"
+          >
+            <span>🚀</span>
+            <span>Trigger Project Completed (project_completed)</span>
+          </button>
         </div>
+      </div>
 
-
-        {/* SEARCH */}
-
-        <SearchBar
-          value={search}
-          onChange={setSearch}
-          placeholder="Search topics..."
-          accent={accent}
-        />
-
-
-        {/* TOPICS TABLE */}
-
-        <div className="bg-[var(--panel)] glow-border rounded-xl p-5">
-
+      <div>
+        <h2 className="text-lg font-bold text-gray-900 mb-3">Course Curriculum Topics & Topic Marking</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {loading ? (
-
-            <LoadingSpinner />
-
-          ) : filteredTopics.length === 0 ? (
-
-            <p className="text-[var(--ink-dim)] text-sm text-center py-8">
-
-              No topics found.
-
-            </p>
-
+            <div className="col-span-full text-center py-8 text-gray-500">Loading topics...</div>
+          ) : topics.length === 0 ? (
+            <div className="col-span-full text-center py-8 text-gray-500 bg-white rounded-xl border border-gray-200">No topics added for this course yet.</div>
           ) : (
+            topics.map((t) => {
+              const isCompleted = studentProgressMap[t.id] === "completed";
+              return (
+                <div key={t.id} className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs flex flex-col justify-between space-y-4 relative">
+                  {isCompleted && (
+                    <span className="absolute top-4 right-4 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-full text-xs font-bold flex items-center space-x-1 shadow-2xs">
+                      <span>✓</span>
+                      <span>Completed</span>
+                    </span>
+                  )}
 
-            <table className="w-full text-sm border-collapse">
-
-
-              <thead>
-
-                <tr className="text-left text-[var(--ink-dim)] border-b-2 border-[var(--border)] uppercase text-xs tracking-wider">
-
-                  <th className="py-2 font-semibold">
-                    Topic
-                  </th>
-
-                  <th className="font-semibold">
-                    Status
-                  </th>
-
-                  <th className="font-semibold">
-                    Action
-                  </th>
-
-                </tr>
-
-              </thead>
-
-
-              <tbody>
-
-                {filteredTopics.map((topic) => (
-
-                  <tr
-                    key={topic.topic_id}
-                    className="border-b-2"
-                    style={{
-                      borderBottomColor:
-                        "rgba(251, 191, 107, 0.35)",
-                    }}
-                  >
-
-
-                    <td className="py-4 font-semibold text-[var(--ink)]">
-
-                      {topic.name}
-
-                    </td>
-
-
-                    <td>
-
-                      <span
-                        className="text-lg font-semibold px-2 py-1 rounded-lg"
-                        style={{
-                          color:
-                            topic.status ===
-                            "completed"
-
-                              ? "#39FF88"
-
-                              : "#7C8AA5",
-
-                          background:
-                            topic.status ===
-                            "completed"
-
-                              ? "#39FF8815"
-
-                              : "transparent",
-                        }}
-                      >
-
-                        {topic.status.toUpperCase()}
-
-                      </span>
-
-                    </td>
-
-
-                    <td className="py-3">
-
-                      <button
-                        disabled={
-                          topic.status ===
-                            "completed" ||
-                          actionId ===
-                            topic.topic_id
-                        }
-                        onClick={() =>
-                          completeTopic(
-                            topic.topic_id
-                          )
-                        }
-                        className="px-3 py-1.5 rounded-full text-xs font-semibold disabled:opacity-40"
-                        style={{
-                          background:
-                            "var(--panel-light)",
-
-                          border:
-                            `1px solid ${accent}50`,
-
-                          color: accent,
-                        }}
-                      >
-
-                        {actionId ===
-                        topic.topic_id
-
-                          ? "SAVING..."
-
-                          : topic.status ===
-                            "completed"
-
-                          ? "DONE"
-
-                          : "MARK COMPLETE"}
-
-                      </button>
-
-                    </td>
-
-                  </tr>
-
-                ))}
-
-              </tbody>
-
-            </table>
-
+                  <div>
+                    <span className="text-xs font-mono text-gray-400">#Topic {t.id}</span>
+                    <h3 className="font-semibold text-gray-900 text-base mt-1 pr-20">{t.name}</h3>
+                  </div>
+                  <div className="space-y-2 pt-2 border-t border-gray-100">
+                    <button
+                      onClick={() => handleOpenMarking(t)}
+                      className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-xs flex items-center justify-center space-x-1"
+                    >
+                      <span>✅</span>
+                      <span>Mark Topic & Send `topic_complete`</span>
+                    </button>
+                    <div className="flex justify-end space-x-2 pt-1">
+                      <button onClick={() => { setEditingTopic(t); setTopicName(t.name); setShowTopicModal(true); }} className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-xs font-medium cursor-pointer">Edit</button>
+                      <button onClick={() => handleDeleteTopic(t.id)} className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded text-xs font-medium cursor-pointer">Delete</button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
           )}
-
         </div>
+      </div>
 
-      </main>
+      {showTopicModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 space-y-4 shadow-xl">
+            <h2 className="text-lg font-bold text-gray-900">{editingTopic ? "Edit Topic" : "Add Course Topic"}</h2>
+            <form onSubmit={handleTopicSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Topic Name</label>
+                <input
+                  type="text"
+                  required
+                  value={topicName}
+                  onChange={(e) => setTopicName(e.target.value)}
+                  placeholder="e.g. Ultrasonic Sensor Logic"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setShowTopicModal(false)} className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 cursor-pointer">Cancel</button>
+                <button type="submit" disabled={submittingTopic} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium cursor-pointer shadow-xs">{submittingTopic ? "Saving..." : "Save Topic"}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
+      {showMarkingModal && selectedTopic && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 space-y-4 shadow-xl">
+            <div className="flex justify-between items-center border-b pb-3">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Mark Topic Complete</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Topic: <span className="font-semibold text-gray-700">{selectedTopic.name}</span></p>
+              </div>
+              <button onClick={() => setShowMarkingModal(false)} className="text-gray-400 hover:text-gray-600 text-lg font-bold px-2 cursor-pointer">&times;</button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Select Student:</label>
+                <select
+                  value={markingStudentId}
+                  onChange={(e) => {
+                    const sid = Number(e.target.value);
+                    setMarkingStudentId(sid);
+                    checkTopicStatus(sid, selectedTopic.id);
+                  }}
+                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-800 shadow-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {students.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name} (ID: {s.id})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-between">
+                <span className="text-xs text-gray-500">Current Status:</span>
+                <span className="text-xs font-semibold">
+                  {loadingStatus ? "Loading..." : topicStatus === "completed" ? (
+                    <span className="text-green-600 font-bold">✓ Completed</span>
+                  ) : (
+                    <span className="text-yellow-600">Pending</span>
+                  )}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t">
+              <button type="button" onClick={() => setShowMarkingModal(false)} className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 cursor-pointer">Close</button>
+              <button
+                type="button"
+                onClick={handleCompleteTopic}
+                disabled={actionLoading === "topic_complete" || topicStatus === "completed"}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white rounded-lg text-sm font-medium cursor-pointer shadow-xs"
+              >
+                {actionLoading === "topic_complete" ? "Sending..." : "Mark Complete & Send `topic_complete`"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showProjectModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 space-y-4 shadow-xl">
+            <div className="flex justify-between items-center border-b pb-3">
+              <h2 className="text-lg font-bold text-gray-900">Trigger Project Completed</h2>
+              <button onClick={() => setShowProjectModal(false)} className="text-gray-400 hover:text-gray-600 text-lg font-bold px-2 cursor-pointer">&times;</button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Project Name</label>
+                <input
+                  type="text"
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t">
+              <button type="button" onClick={() => setShowProjectModal(false)} className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 cursor-pointer">Cancel</button>
+              <button
+                type="button"
+                onClick={() => {
+                  triggerNotification("project-complete", "project", "Project Completed notification sent successfully!", { project_name: projectName });
+                  setShowProjectModal(false);
+                }}
+                disabled={actionLoading === "project"}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium cursor-pointer shadow-xs"
+              >
+                {actionLoading === "project" ? "Sending..." : "Send `project_completed`"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-
   );
-
 }

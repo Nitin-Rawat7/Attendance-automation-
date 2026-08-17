@@ -1,593 +1,421 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import {
-  Users,
-  CalendarCheck,
-  UserX,
-  BookOpen,
-  Plus,
-  Pencil,
-  Trash2,
-  Check,
-  X,
-} from "lucide-react";
+import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
-import StatCard from "@/components/StatCard";
-import { InteractiveRobotSpline } from "@/components/blocks/interactive-3d-robot";
-import LoadingSpinner from "@/components/LoadingSpinner";
+import Navbar from "@/components/Navbar";
+import DashboardView from "@/components/DashboardView";
+import TopicsView from "@/components/TopicsView";
+import ProjectsView from "@/components/ProjectsView";
+import StudentsView from "@/components/StudentsView";
+import GalleryView from "@/components/GalleryView";
+import TopicModal from "@/components/TopicModal";
+import MarkingModal from "@/components/MarkingModal";
+import EditStudentModal from "@/components/EditStudentModal";
 
-type StudentRow = {
-  id: number;
-  name: string;
-  course_id?: number;
-  course_name: string;
-  parent_whatsapp?: string;
-  total_classes: number;
-  remaining_classes: number;
+export type CourseTopic = { id: number; name: string };
+export type CourseProject = { id: number; name: string };
+export type Student = { 
+  id: number; 
+  name: string; 
+  parent_whatsapp?: string; 
+  course_id?: number; 
+  total_classes?: number; 
+  remaining_classes?: number; 
 };
 
-type CourseRow = {
-  id: number;
-  name: string;
-};
+export const COURSES = [
+  { id: 1, name: "Robotics" },
+  { id: 2, name: "AI" },
+  { id: 3, name: "Programming" },
+];
 
-export default function Dashboard() {
-  const [summary, setSummary] = useState({
-    total_students: 0,
-    today_present: 0,
-    today_absent: 0,
-    topics_completed: 0,
-  });
+export const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-  const [students, setStudents] = useState<StudentRow[]>([]);
-  const [courses, setCourses] = useState<CourseRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadingId, setLoadingId] = useState<number | null>(null);
-  const [showForm, setShowForm] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+export default function MainLayout() {
+  const [activeTab, setActiveTab] = useState<"dashboard" | "topics" | "projects" | "students" | "gallery">("dashboard");
+  const [selectedCourse, setSelectedCourse] = useState<number>(1);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [topics, setTopics] = useState<CourseTopic[]>([]);
+  const [projects, setProjects] = useState<CourseProject[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
 
-  // Inline Row Edit State
-  const [editingRowId, setEditingRowId] = useState<number | null>(null);
-  const [editRowData, setEditRowData] = useState<{
-    course_id: number | string;
-    remaining_classes: number | string;
-  }>({
-    course_id: "",
-    remaining_classes: "",
-  });
+  // Search & Filter State for Students
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // Prevent duplicate attendance requests
-  const attendanceRequestRef = useRef<number | null>(null);
+  // Global Student & Action States
+  const [selectedStudentId, setSelectedStudentId] = useState<number | "">("");
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const [form, setForm] = useState({
-    name: "",
-    course_id: "",
-    parent_whatsapp: "",
-    total_classes: "",
-  });
+  // Modals States for Topics
+  const [showTopicModal, setShowTopicModal] = useState<boolean>(false);
+  const [editingTopic, setEditingTopic] = useState<CourseTopic | null>(null);
+  const [topicName, setTopicName] = useState<string>("");
+  const [submittingTopic, setSubmittingTopic] = useState<boolean>(false);
 
-  const API = process.env.NEXT_PUBLIC_API_URL;
+  // Modals States for Projects
+  const [showProjectModal, setShowProjectModal] = useState<boolean>(false);
+  const [editingProject, setEditingProject] = useState<CourseProject | null>(null);
+  const [projectNameInput, setProjectNameInput] = useState<string>("");
+  const [submittingProject, setSubmittingProject] = useState<boolean>(false);
 
-  const loadData = async () => {
+  // Marking Modal States
+  const [showMarkingModal, setShowMarkingModal] = useState<boolean>(false);
+  const [selectedTopic, setSelectedTopic] = useState<CourseTopic | null>(null);
+  const [markingStudentId, setMarkingStudentId] = useState<number | "">("");
+  const [topicStatus, setTopicStatus] = useState<string>("pending");
+  const [loadingStatus, setLoadingStatus] = useState<boolean>(false);
+
+  // Edit Student Modal States
+  const [showEditStudentModal, setShowEditStudentModal] = useState<boolean>(false);
+  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [editStudentName, setEditStudentName] = useState<string>("");
+  const [editStudentWhatsapp, setEditStudentWhatsapp] = useState<string>("");
+  const [editStudentCourseId, setEditStudentCourseId] = useState<number>(1);
+  const [editTotalClasses, setEditTotalClasses] = useState<number>(0);
+  const [editRemainingClasses, setEditRemainingClasses] = useState<number>(0);
+  const [submittingStudent, setSubmittingStudent] = useState<boolean>(false);
+
+  const fetchData = async (courseId: number) => {
     setLoading(true);
+    try {
+      const [studentsRes, topicsRes, projectsRes] = await Promise.all([
+        fetch(`${API}/students/?course_id=${courseId}`),
+        fetch(`${API}/students/course/${courseId}/topics`),
+        fetch(`${API}/students/course/${courseId}/projects`)
+      ]);
+      const studentsData = await studentsRes.json();
+      const topicsData = await topicsRes.json();
+      const projectsData = await projectsRes.json().catch(() => []);
 
-    const [summaryRes, studentsRes] = await Promise.all([
-      fetch(`${API}/dashboard/summary`)
-        .then((r) => r.json())
-        .catch(() => null),
+      const studentList = Array.isArray(studentsData) ? studentsData : [];
+      setStudents(studentList);
+      setTopics(Array.isArray(topicsData) ? topicsData : []);
+      setProjects(Array.isArray(projectsData) ? projectsData : []);
 
-      fetch(`${API}/students/`)
-        .then((r) => r.json())
-        .catch(() => []),
-    ]);
-
-    if (summaryRes) {
-      setSummary(summaryRes);
+      if (studentList.length > 0) {
+        setSelectedStudentId(studentList[0].id);
+        setMarkingStudentId(studentList[0].id);
+      } else {
+        setSelectedStudentId("");
+        setMarkingStudentId("");
+      }
+    } catch (err) {
+      console.error(err);
+      setStudents([]);
+      setTopics([]);
+      setProjects([]);
+    } finally {
+      setLoading(false);
     }
-
-    setStudents(studentsRes);
-    setLoading(false);
   };
 
   useEffect(() => {
-    loadData();
+    fetchData(selectedCourse);
+  }, [selectedCourse]);
 
-    fetch(`${API}/courses/`)
-      .then((r) => r.json())
-      .then(setCourses)
-      .catch(() => {});
-  }, []);
-
-  const markAttendance = async (
-    studentId: number,
-    status: "present" | "absent"
-  ) => {
-    if (attendanceRequestRef.current === studentId) return;
-
-    attendanceRequestRef.current = studentId;
-    setLoadingId(studentId);
-
-    try {
-      const res = await fetch(
-        `${API}/attendance/${studentId}/mark?status=${status}`,
-        { method: "POST" }
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(data.detail || "Something went wrong");
-      } else {
-        await loadData();
-      }
-    } catch (error) {
-      console.error("[attendance] request failed:", error);
-      alert("Could not reach server");
-    } finally {
-      attendanceRequestRef.current = null;
-      setLoadingId(null);
-    }
-  };
-
-  // --- DELETE STUDENT ---
-  const handleDeleteStudent = async (studentId: number, name: string) => {
-    if (!confirm(`Are you sure you want to delete ${name}?`)) return;
-
-    try {
-      const res = await fetch(`${API}/students/${studentId}`, {
-        method: "DELETE",
-      });
-
-      if (res.ok) {
-        await loadData();
-      } else {
-        const data = await res.json();
-        alert(data.detail || "Failed to delete student");
-      }
-    } catch (error) {
-      alert("Error deleting student");
-    }
-  };
-
-  // --- ENABLE INLINE EDIT FOR A ROW ---
-  const handleStartInlineEdit = (s: StudentRow) => {
-    setEditingRowId(s.id);
-    setEditRowData({
-      course_id: s.course_id || "",
-      remaining_classes: s.remaining_classes ?? 0,
-    });
-  };
-
-  // --- CANCEL INLINE EDIT ---
-  const handleCancelInlineEdit = () => {
-    setEditingRowId(null);
-  };
-
-  // --- SAVE INLINE EDIT ---
-  const handleSaveInlineEdit = async (s: StudentRow) => {
-    setSubmitting(true);
-
-    try {
-      const res = await fetch(`${API}/students/${s.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: s.name,
-          course_id: Number(editRowData.course_id),
-          parent_whatsapp: s.parent_whatsapp || "",
-          total_classes: s.total_classes,
-          remaining_classes: Number(editRowData.remaining_classes),
-        }),
-      });
-
-      if (res.ok) {
-        setEditingRowId(null);
-        await loadData();
-      } else {
-        const data = await res.json();
-        alert(data.detail || "Failed to update student details");
-      }
-    } catch (error) {
-      alert("Error updating student");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // --- ADD STUDENT ---
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (
-      !form.name ||
-      !form.course_id ||
-      !form.parent_whatsapp ||
-      !form.total_classes
-    ) {
-      alert("Please fill all fields");
+  const triggerNotification = async (endpoint: string, actionKey: string, successMsg: string, extraBody?: object) => {
+    if (!selectedStudentId) {
+      alert("Please select a student first.");
       return;
     }
-
-    setSubmitting(true);
-
-    const res = await fetch(`${API}/students/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: form.name,
-        course_id: Number(form.course_id),
-        parent_whatsapp: form.parent_whatsapp,
-        total_classes: Number(form.total_classes),
-        remaining_classes: Number(form.total_classes),
-      }),
-    });
-
-    if (res.ok) {
-      setForm({
-        name: "",
-        course_id: "",
-        parent_whatsapp: "",
-        total_classes: "",
+    setActionLoading(actionKey);
+    try {
+      const res = await fetch(`${API}/students/${selectedStudentId}/${endpoint}`, {
+        method: "POST",
+        headers: extraBody ? { "Content-Type": "application/json" } : undefined,
+        body: extraBody ? JSON.stringify(extraBody) : undefined,
       });
-
-      setShowForm(false);
-      loadData();
-    } else {
-      alert("Failed to add student");
+      if (!res.ok) throw new Error("Failed to send notification");
+      alert(successMsg);
+    } catch (err: any) {
+      alert(err.message || "Error sending notification");
+    } finally {
+      setActionLoading(null);
     }
-
-    setSubmitting(false);
   };
 
+  const checkTopicStatus = async (studentId: number, topicId: number) => {
+    setLoadingStatus(true);
+    try {
+      const res = await fetch(`${API}/students/${studentId}/topics`);
+      const data = await res.json();
+      const found = Array.isArray(data) && data.find((t: any) => t.topic_id === topicId);
+      setTopicStatus(found ? found.status : "pending");
+    } catch {
+      setTopicStatus("pending");
+    } finally {
+      setLoadingStatus(false);
+    }
+  };
+
+  const handleCompleteTopic = async () => {
+    if (!markingStudentId || !selectedTopic) return;
+    setActionLoading("topic_complete");
+    try {
+      const res = await fetch(`${API}/students/${markingStudentId}/topics/${selectedTopic.id}/complete`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed");
+      setTopicStatus("completed");
+      alert("Topic marked complete & 'topic_complete' template sent to parent!");
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleCompleteProject = async (project: CourseProject) => {
+    if (!selectedStudentId) {
+      alert("Please select a student first.");
+      return;
+    }
+    setActionLoading(`project_complete_${project.id}`);
+    try {
+      const res = await fetch(`${API}/students/${selectedStudentId}/project-update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_name: project.name }),
+      });
+      if (!res.ok) throw new Error("Failed to send project update");
+      alert(`Project '${project.name}' update sent to parent successfully!`);
+    } catch (err: any) {
+      alert(err.message || "Error sending project update");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleTopicSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!topicName) return;
+    setSubmittingTopic(true);
+    const isEdit = !!editingTopic;
+    const url = isEdit ? `${API}/students/course/${selectedCourse}/topics/${editingTopic.id}` : `${API}/students/course/${selectedCourse}/add-topic`;
+    
+    try {
+      const res = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(isEdit ? { name: topicName } : { course_id: selectedCourse, name: topicName }),
+      });
+      if (!res.ok) throw new Error("Operation failed");
+      setShowTopicModal(false);
+      fetchData(selectedCourse);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSubmittingTopic(false);
+    }
+  };
+
+  const handleDeleteTopic = async (topicId: number) => {
+    if (!confirm("Are you sure?")) return;
+    try {
+      const res = await fetch(`${API}/students/course/${selectedCourse}/topics/${topicId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Delete failed");
+      fetchData(selectedCourse);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleProjectSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!projectNameInput) return;
+    setSubmittingProject(true);
+    const isEdit = !!editingProject;
+    const url = isEdit 
+      ? `${API}/students/course/${selectedCourse}/projects/${editingProject.id}` 
+      : `${API}/students/course/${selectedCourse}/add-project`;
+    
+    try {
+      const res = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(isEdit ? { name: projectNameInput } : { course_id: selectedCourse, name: projectNameInput }),
+      });
+      if (!res.ok) throw new Error("Operation failed");
+      setShowProjectModal(false);
+      fetchData(selectedCourse);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSubmittingProject(false);
+    }
+  };
+
+  const handleDeleteProject = async (projectId: number) => {
+    if (!confirm("Are you sure you want to delete this project?")) return;
+    try {
+      const res = await fetch(`${API}/students/course/${selectedCourse}/projects/${projectId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Delete failed");
+      fetchData(selectedCourse);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleStudentUpdateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStudent) return;
+    setSubmittingStudent(true);
+    try {
+      const res = await fetch(`${API}/students/${editingStudent.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          name: editStudentName, 
+          parent_whatsapp: editStudentWhatsapp, 
+          course_id: editStudentCourseId, 
+          total_classes: editTotalClasses,
+          remaining_classes: editRemainingClasses 
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to update student info");
+      setShowEditStudentModal(false);
+      fetchData(selectedCourse);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSubmittingStudent(false);
+    }
+  };
+
+  const filteredStudents = students.filter(s =>
+    s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (s.parent_whatsapp && s.parent_whatsapp.includes(searchQuery))
+  );
+
   return (
-    <div className="flex min-h-screen">
-      <Sidebar />
+    <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
+      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
 
-      {/* Main Container with vertical scrolling */}
-      <main className="flex-1 h-screen overflow-y-auto p-8 pb-20">
-        {/* WELCOME HEADING */}
-        <h2
-          className="text-center text-[32px] mb-[6px]"
-          style={{ fontFamily: "var(--font-fredoka)" }}
-        >
-          <span className="text-[var(--ink)]">Welcome, </span>
-          <span style={{ color: "#A855F7" }}>Sir</span>
-        </h2>
+      <main className="flex-1 flex flex-col overflow-y-auto">
+        <Navbar 
+          activeTab={activeTab} 
+          selectedCourse={selectedCourse} 
+          setSelectedCourse={setSelectedCourse} 
+        />
 
-        {/* ROBOT BANNER */}
-        <div className="bg-[var(--panel)] glow-border rounded-2xl mb-9 h-[210px] flex items-center justify-center relative overflow-hidden">
-          <svg
-            className="absolute inset-0 w-full h-full opacity-70"
-            viewBox="0 0 900 180"
-            preserveAspectRatio="none"
-          >
-            <g stroke="#A78BFA" strokeWidth="1" fill="none">
-              <path d="M0 40 H120 M120 40 L145 25 H230" />
-              <path d="M0 80 H90 M90 80 L70 95 H190" />
-              <path d="M0 130 H150 M150 130 L175 145 H260" />
-              <path d="M950 40 H780 M780 40 L755 25 H670" />
-              <path d="M950 80 H810 M810 80 L830 95 H710" />
-              <path d="M950 130 H750 M750 130 L725 145 H640" />
-            </g>
-            <g fill="#A78BFA">
-              <circle cx="120" cy="40" r="3" />
-              <circle cx="230" cy="25" r="3" />
-              <circle cx="90" cy="80" r="3" />
-              <circle cx="190" cy="95" r="3" />
-              <circle cx="150" cy="130" r="3" />
-              <circle cx="260" cy="145" r="3" />
-              <circle cx="780" cy="40" r="3" />
-              <circle cx="670" cy="25" r="3" />
-              <circle cx="810" cy="80" r="3" />
-              <circle cx="710" cy="95" r="3" />
-              <circle cx="750" cy="130" r="3" />
-              <circle cx="640" cy="145" r="3" />
-            </g>
-          </svg>
-
-          <div className="w-full max-w-[300px] h-[220px] relative z-10 ml-8">
-            <InteractiveRobotSpline
-              scene="https://prod.spline.design/PyzDhpQ9E5f1E3MT/scene.splinecode"
-              className="w-full h-full"
+        <div className="p-8 max-w-6xl w-full mx-auto space-y-6">
+          {activeTab === "dashboard" && (
+            <DashboardView
+              students={students}
+              selectedStudentId={selectedStudentId}
+              setSelectedStudentId={setSelectedStudentId}
+              actionLoading={actionLoading}
+              triggerNotification={triggerNotification}
             />
-          </div>
-        </div>
+          )}
 
-        {/* STAT CARDS */}
-        <div className="flex gap-[8px] mb-6 flex-wrap">
-          <StatCard
-            icon={Users}
-            value={summary.total_students}
-            label="Total Students"
-            accent="#A855F7"
-          />
-          <StatCard
-            icon={CalendarCheck}
-            value={summary.today_present}
-            label="Present Today"
-            accent="#39FF88"
-          />
-          <StatCard
-            icon={UserX}
-            value={summary.today_absent}
-            label="Absent Today"
-            accent="#FF3B6E"
-          />
-          <StatCard
-            icon={BookOpen}
-            value={summary.topics_completed}
-            label="Topics Completed"
-            accent="#00E5FF"
-          />
-        </div>
-
-        {/* STUDENT ROSTER */}
-        <div className="bg-[var(--panel)] glow-border rounded-xl p-5 mb-8">
-          {/* ROSTER HEADER */}
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-display font-bold text-lg text-[var(--ink)] tracking-wide flex items-center gap-2">
-              <span
-                className="w-1 h-5 rounded-full"
-                style={{ background: "#A855F7" }}
-              />
-              <span className="text-[var(--ink)]">STUDENT </span>
-              <span style={{ color: "#A855F7" }}>ROSTER</span>
-            </h3>
-
-            <button
-              onClick={() => setShowForm(!showForm)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold"
-              style={{
-                background: showForm ? "var(--panel-light)" : "#A855F7",
-                color: showForm ? "#A855F7" : "#fff",
+          {activeTab === "topics" && (
+            <TopicsView
+              topics={topics}
+              loading={loading}
+              students={students}
+              onAddClick={() => { setEditingTopic(null); setTopicName(""); setShowTopicModal(true); }}
+              onEditClick={(t) => { setEditingTopic(t); setTopicName(t.name); setShowTopicModal(true); }}
+              onDeleteClick={handleDeleteTopic}
+              onMarkCompleteClick={(t) => {
+                setSelectedTopic(t);
+                setShowMarkingModal(true);
+                if (students.length > 0) {
+                  setMarkingStudentId(students[0].id);
+                  checkTopicStatus(students[0].id, t.id);
+                }
               }}
-            >
-              <Plus size={14} />
-              {showForm ? "CANCEL" : "ADD STUDENT"}
-            </button>
-          </div>
-
-          {/* ADD STUDENT FORM */}
-          {showForm && (
-            <form
-              onSubmit={handleSubmit}
-              className="bg-[var(--panel-light)] rounded-xl p-5 mb-5 grid grid-cols-2 gap-4"
-            >
-              <div>
-                <label className="text-xs text-[var(--ink-dim)] uppercase tracking-wide">
-                  Name
-                </label>
-                <input
-                  value={form.name}
-                  onChange={(e) =>
-                    setForm({ ...form, name: e.target.value })
-                  }
-                  className="w-full mt-1 bg-[var(--panel)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
-                  placeholder="Student name"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs text-[var(--ink-dim)] uppercase tracking-wide">
-                  Course
-                </label>
-                <select
-                  value={form.course_id}
-                  onChange={(e) =>
-                    setForm({ ...form, course_id: e.target.value })
-                  }
-                  className="w-full mt-1 bg-[var(--panel)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
-                >
-                  <option value="">Select course</option>
-                  {courses.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs text-[var(--ink-dim)] uppercase tracking-wide">
-                  Parent WhatsApp
-                </label>
-                <input
-                  value={form.parent_whatsapp}
-                  onChange={(e) =>
-                    setForm({ ...form, parent_whatsapp: e.target.value })
-                  }
-                  className="w-full mt-1 bg-[var(--panel)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
-                  placeholder="919876543210"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs text-[var(--ink-dim)] uppercase tracking-wide">
-                  Total Classes
-                </label>
-                <input
-                  type="number"
-                  value={form.total_classes}
-                  onChange={(e) =>
-                    setForm({ ...form, total_classes: e.target.value })
-                  }
-                  className="w-full mt-1 bg-[var(--panel)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--ink)]"
-                  placeholder="72"
-                />
-              </div>
-
-              <div className="col-span-2">
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
-                  style={{ background: "#A855F7", color: "#fff" }}
-                >
-                  {submitting ? "ADDING..." : "SAVE STUDENT"}
-                </button>
-              </div>
-            </form>
+            />
           )}
 
-          {/* TABLE */}
-          {loading ? (
-            <LoadingSpinner />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr
-                    className="text-left border-b-2 border-[var(--border)] uppercase text-xs tracking-wider"
-                    style={{ color: "#A855F7" }}
-                  >
-                    <th className="py-2 font-semibold">Name</th>
-                    <th className="font-semibold">Course</th>
-                    <th className="font-semibold">Remaining Classes</th>
-                    <th className="font-semibold">Action</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {students.map((s) => {
-                    const isEditing = editingRowId === s.id;
-
-                    return (
-                      <tr
-                        key={s.id}
-                        className="border-b-2"
-                        style={{
-                          borderBottomColor: "rgba(168, 85, 247, 0.35)",
-                        }}
-                      >
-                        {/* NAME */}
-                        <td className="py-4 font-semibold text-[var(--ink)]">
-                          {s.name}
-                        </td>
-
-                        {/* COURSE - READ OR INLINE DROPDOWN */}
-                        <td className="text-[var(--ink-dim)] pr-4">
-                          {isEditing ? (
-                            <select
-                              value={editRowData.course_id}
-                              onChange={(e) =>
-                                setEditRowData({
-                                  ...editRowData,
-                                  course_id: e.target.value,
-                                })
-                              }
-                              className="bg-[var(--panel-light)] border border-[#A855F7] rounded px-2 py-1 text-sm text-[var(--ink)] focus:outline-none"
-                            >
-                              <option value="">Select course</option>
-                              {courses.map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {c.name}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            s.course_name
-                          )}
-                        </td>
-
-                        {/* REMAINING CLASSES - READ OR INLINE INPUT */}
-                        <td className="text-[var(--ink-dim)] pr-4">
-                          {isEditing ? (
-                            <div className="flex items-center gap-1">
-                              <input
-                                type="number"
-                                value={editRowData.remaining_classes}
-                                onChange={(e) =>
-                                  setEditRowData({
-                                    ...editRowData,
-                                    remaining_classes: e.target.value,
-                                  })
-                                }
-                                className="w-20 bg-[var(--panel-light)] border border-[#A855F7] rounded px-2 py-1 text-sm text-[var(--ink)] focus:outline-none"
-                              />
-                              <span className="text-xs">/ {s.total_classes}</span>
-                            </div>
-                          ) : (
-                            `${s.remaining_classes} / ${s.total_classes}`
-                          )}
-                        </td>
-
-                        {/* ACTIONS */}
-                        <td className="py-3">
-                          <span className="inline-flex items-center gap-2">
-                            {/* PRESENT */}
-                            <button
-                              type="button"
-                              disabled={loadingId === s.id || isEditing}
-                              onClick={() => markAttendance(s.id, "present")}
-                              className="px-3 py-1.5 rounded-full bg-[var(--panel-light)] border border-[#39FF88]/40 text-[#39FF88] text-xs font-semibold hover:bg-[#39FF88]/10 disabled:opacity-50"
-                            >
-                              {loadingId === s.id ? "..." : "PRESENT"}
-                            </button>
-
-                            {/* ABSENT */}
-                            <button
-                              type="button"
-                              disabled={loadingId === s.id || isEditing}
-                              onClick={() => markAttendance(s.id, "absent")}
-                              className="px-3 py-1.5 rounded-full bg-[var(--panel-light)] border border-[#FF3B6E]/40 text-[#FF3B6E] text-xs font-semibold hover:bg-[#FF3B6E]/10 disabled:opacity-50"
-                            >
-                              {loadingId === s.id ? "..." : "ABSENT"}
-                            </button>
-
-                            {/* INLINE EDIT / SAVE TOGGLE */}
-                            {isEditing ? (
-                              <>
-                                <button
-                                  type="button"
-                                  disabled={submitting}
-                                  onClick={() => handleSaveInlineEdit(s)}
-                                  className="p-1.5 rounded-lg bg-[#39FF88]/20 border border-[#39FF88] text-[#39FF88] hover:bg-[#39FF88]/30 transition"
-                                  title="Save Changes"
-                                >
-                                  <Check size={15} />
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={handleCancelInlineEdit}
-                                  className="p-1.5 rounded-lg bg-[#FF3B6E]/20 border border-[#FF3B6E] text-[#FF3B6E] hover:bg-[#FF3B6E]/30 transition"
-                                  title="Cancel"
-                                >
-                                  <X size={15} />
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleStartInlineEdit(s)}
-                                className="p-1.5 rounded-lg bg-[var(--panel-light)] border border-[#39FF88]/40 text-[#39FF88] hover:bg-[#39FF88]/20 transition"
-                                title="Edit Student Inline"
-                              >
-                                <Pencil size={15} />
-                              </button>
-                            )}
-
-                            {/* DELETE BUTTON */}
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteStudent(s.id, s.name)}
-                              className="p-1.5 rounded-lg bg-[var(--panel-light)] border border-[#FF3B6E]/40 text-[#FF3B6E] hover:bg-[#FF3B6E]/20 transition"
-                              title="Delete Student"
-                            >
-                              <Trash2 size={15} />
-                            </button>
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+          {activeTab === "projects" && (
+            <ProjectsView
+              projects={projects}
+              loading={loading}
+              students={students}
+              selectedStudentId={selectedStudentId}
+              setSelectedStudentId={setSelectedStudentId}
+              actionLoading={actionLoading}
+              onAddClick={() => { setEditingProject(null); setProjectNameInput(""); setShowProjectModal(true); }}
+              onEditClick={(p) => { setEditingProject(p); setProjectNameInput(p.name); setShowProjectModal(true); }}
+              onDeleteClick={handleDeleteProject}
+              onMarkCompleteClick={handleCompleteProject}
+            />
           )}
+
+          {activeTab === "students" && (
+            <StudentsView
+              students={filteredStudents}
+              courses={COURSES}
+              loading={loading}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              onEditStudent={(s) => {
+                setEditingStudent(s);
+                setEditStudentName(s.name);
+                setEditStudentWhatsapp(s.parent_whatsapp || "");
+                setEditStudentCourseId(s.course_id || selectedCourse);
+                setEditTotalClasses(s.total_classes ?? 0);
+                setEditRemainingClasses(s.remaining_classes ?? 0);
+                setShowEditStudentModal(true);
+              }}
+            />
+          )}
+
+          {activeTab === "gallery" && <GalleryView />}
         </div>
       </main>
+
+      {/* Modals */}
+      <TopicModal
+        isOpen={showTopicModal}
+        onClose={() => setShowTopicModal(false)}
+        onSubmit={handleTopicSubmit}
+        editingTopic={editingTopic}
+        topicName={topicName}
+        setTopicName={setTopicName}
+        submittingTopic={submittingTopic}
+      />
+
+      <TopicModal
+        isOpen={showProjectModal}
+        onClose={() => setShowProjectModal(false)}
+        onSubmit={handleProjectSubmit}
+        editingTopic={editingProject}
+        topicName={projectNameInput}
+        setTopicName={setProjectNameInput}
+        submittingTopic={submittingProject}
+      />
+
+      <MarkingModal
+        isOpen={showMarkingModal}
+        onClose={() => setShowMarkingModal(false)}
+        selectedTopic={selectedTopic}
+        students={students}
+        markingStudentId={markingStudentId}
+        setMarkingStudentId={setMarkingStudentId}
+        checkTopicStatus={checkTopicStatus}
+        topicStatus={topicStatus}
+        loadingStatus={loadingStatus}
+        handleCompleteTopic={handleCompleteTopic}
+        actionLoading={actionLoading}
+      />
+
+      <EditStudentModal
+        isOpen={showEditStudentModal}
+        onClose={() => setShowEditStudentModal(false)}
+        onSubmit={handleStudentUpdateSubmit}
+        editStudentName={editStudentName}
+        setEditStudentName={setEditStudentName}
+        editStudentWhatsapp={editStudentWhatsapp}
+        setEditStudentWhatsapp={setEditStudentWhatsapp}
+        editStudentCourseId={editStudentCourseId}
+        setEditStudentCourseId={setEditStudentCourseId}
+        editTotalClasses={editTotalClasses}
+        setEditTotalClasses={setEditTotalClasses}
+        editRemainingClasses={editRemainingClasses}
+        setEditRemainingClasses={setEditRemainingClasses}
+        courses={COURSES}
+        submittingStudent={submittingStudent}
+      />
     </div>
   );
 }
