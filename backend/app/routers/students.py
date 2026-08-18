@@ -325,6 +325,8 @@ def update_student(student_id: int, payload: StudentUpdate, db: Session = Depend
 def delete_student(student_id: int, db: Session = Depends(get_db)):
     try:
         db.execute(text("DELETE FROM attendance WHERE student_id = :id"), {"id": student_id})
+        db.execute(text("DELETE FROM student_topic_progress WHERE student_id = :id"), {"id": student_id})
+        
         result = db.execute(text("DELETE FROM students WHERE id = :id"), {"id": student_id})
         db.commit()
         
