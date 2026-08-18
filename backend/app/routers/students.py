@@ -324,9 +324,16 @@ def update_student(student_id: int, payload: StudentUpdate, db: Session = Depend
 @router.delete("/{student_id}")
 def delete_student(student_id: int, db: Session = Depends(get_db)):
     try:
+        # Sabhi possible related tables se student ki entries delete karein
         db.execute(text("DELETE FROM attendance WHERE student_id = :id"), {"id": student_id})
         db.execute(text("DELETE FROM student_topic_progress WHERE student_id = :id"), {"id": student_id})
         
+        # Agar koi aur table jaise student_project_progress ya similar ho toh uska bhi safe delete
+        try:
+            db.execute(text("DELETE FROM student_project_progress WHERE student_id = :id"), {"id": student_id})
+        except Exception:
+            pass # Agar table exist nahi karti toh ignore karein
+
         result = db.execute(text("DELETE FROM students WHERE id = :id"), {"id": student_id})
         db.commit()
         

@@ -258,7 +258,8 @@ export default function MainLayout() {
     if (!confirm("Are you sure you want to delete this student?")) return;
     try {
       const res = await fetch(`${API}/students/${studentId}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete student");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed to delete student");
       fetchData(selectedCourse);
     } catch (err: any) {
       alert(err.message);
