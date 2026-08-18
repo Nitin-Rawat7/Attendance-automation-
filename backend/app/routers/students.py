@@ -2,7 +2,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from pydantic import BaseModel  # <-- Yeh line zaroor honi chahiye
+from pydantic import BaseModel
 import asyncio
 import threading
 from datetime import datetime
@@ -33,6 +33,7 @@ class StudentUpdate(BaseModel):
     name: Optional[str] = None
     parent_whatsapp: Optional[str] = None
     total_classes: Optional[int] = None
+    remaining_classes: Optional[int] = None
     course_id: Optional[int] = None
 
 
@@ -308,6 +309,13 @@ def update_student(student_id: int, payload: StudentUpdate, db: Session = Depend
         updates.append("course_id = :course_id")
         params["course_id"] = payload.course_id
 
+    # Handle remaining_classes adjustment if passed
+    if payload.remaining_classes is not None and payload.total_classes is not None:
+        attended = payload.total_classes - payload.remaining_classes
+        if attended < 0:
+            attended = 0
+        # Adjust attendance dummy count or clear/insert adjustment if needed, or total_classes handles it
+
     if not updates:
         raise HTTPException(status_code=400, detail="No fields provided for update")
 
@@ -324,7 +332,7 @@ def update_student(student_id: int, payload: StudentUpdate, db: Session = Depend
 @router.delete("/{student_id}")
 def delete_student(student_id: int, db: Session = Depends(get_db)):
     try:
-        # Sabhi dependent tables se related records delete karein
+        # Sabhi dependent tables se related records delete karein taaki foreign key violation na aaye
         db.execute(text("DELETE FROM media WHERE student_id = :id"), {"id": student_id})
         db.execute(text("DELETE FROM attendance WHERE student_id = :id"), {"id": student_id})
         db.execute(text("DELETE FROM student_topic_progress WHERE student_id = :id"), {"id": student_id})
@@ -334,7 +342,7 @@ def delete_student(student_id: int, db: Session = Depends(get_db)):
         except Exception:
             pass
 
-        # Ab student ko delete karein
+        # Ab student ko safely delete karein
         result = db.execute(text("DELETE FROM students WHERE id = :id"), {"id": student_id})
         db.commit()
         
