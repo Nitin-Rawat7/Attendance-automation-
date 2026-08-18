@@ -2,7 +2,6 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from pydantic import BaseModel
 import asyncio
 import threading
 from datetime import datetime
