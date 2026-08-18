@@ -1,4 +1,4 @@
-export default function StudentsView({ students, courses, loading, searchQuery, setSearchQuery, onEditStudent }: any) {
+export default function StudentsView({ students, courses, loading, searchQuery, setSearchQuery, onEditStudent, onDeleteStudent }: any) {
   const getCourseName = (courseId: number) => {
     const c = courses.find((x: any) => x.id === courseId);
     return c ? c.name : "N/A";
@@ -30,12 +30,20 @@ export default function StudentsView({ students, courses, loading, searchQuery, 
                   Remaining Classes: <span className="font-semibold text-emerald-600">{s.remaining_classes ?? 0}</span>
                 </p>
               </div>
-              <button 
-                onClick={() => onEditStudent(s)} 
-                className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3.5 py-1.5 rounded-lg font-semibold transition"
-              >
-                Edit
-              </button>
+              <div className="flex space-x-2">
+                <button 
+                  onClick={() => onEditStudent(s)} 
+                  className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3.5 py-1.5 rounded-lg font-semibold transition"
+                >
+                  Edit
+                </button>
+                <button 
+                  onClick={() => onDeleteStudent(s.id)} 
+                  className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3.5 py-1.5 rounded-lg font-semibold transition"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           ))}
         </div>
