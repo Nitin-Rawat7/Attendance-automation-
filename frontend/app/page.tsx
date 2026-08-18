@@ -254,6 +254,17 @@ export default function MainLayout() {
     }
   };
 
+  const handleDeleteStudent = async (studentId: number) => {
+    if (!confirm("Are you sure you want to delete this student?")) return;
+    try {
+      const res = await fetch(`${API}/students/${studentId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete student");
+      fetchData(selectedCourse);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   const handleStudentUpdateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingStudent) return;
@@ -357,6 +368,7 @@ export default function MainLayout() {
                 setEditRemainingClasses(s.remaining_classes ?? 0);
                 setShowEditStudentModal(true);
               }}
+              onDeleteStudent={handleDeleteStudent}
             />
           )}
 
